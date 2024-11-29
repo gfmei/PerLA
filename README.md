@@ -11,7 +11,6 @@ Welcome to the official repository for **PerLA (Perceptive 3D Language Assistant
 Visit the [PerLA website](https://gfmei.github.io/PerLA) to explore more details about the project, methodology, and results.
 
 ## Website License
-## Website License
 
 This project is licensed under the **[Creative Commons Attribution-ShareAlike 4.0 International License](http://creativecommons.org/licenses/by-sa/4.0/)**.
 
