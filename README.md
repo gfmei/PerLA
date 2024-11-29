@@ -10,14 +10,6 @@ Welcome to the official repository for **PerLA (Perceptive 3D Language Assistant
 
 Visit the [PerLA website](https://gfmei.github.io/PerLA) to explore more details about the project, methodology, and results.
 
-## Website License
-
-This project is licensed under the **[Creative Commons Attribution-ShareAlike 4.0 International License](http://creativecommons.org/licenses/by-sa/4.0/)**.
-
-[![Creative Commons License](https://i.creativecommons.org/l/by-sa/4.0/88x31.png)](http://creativecommons.org/licenses/by-sa/4.0/)
-
-For more information, visit the [Creative Commons License page](http://creativecommons.org/licenses/by-sa/4.0/).
-
 
 ## Contributing
 We welcome and encourage contributions to the PerLA project! If you'd like to contribute:
@@ -40,3 +32,12 @@ For questions, issues, or collaboration opportunities:
 - [PerLA Website](https://gfmei.github.io/PerLA/)
 - [PerLA Code Repository](https://github.com/gfmei/PerLA)
 - [PerLA Paper on arXiv](https://arxiv.org/abs/xxxxx)
+
+
+## Website License
+
+This project is licensed under the **[Creative Commons Attribution-ShareAlike 4.0 International License](http://creativecommons.org/licenses/by-sa/4.0/)**.
+
+[![Creative Commons License](https://i.creativecommons.org/l/by-sa/4.0/88x31.png)](http://creativecommons.org/licenses/by-sa/4.0/)
+
+For more information, visit the [Creative Commons License page](http://creativecommons.org/licenses/by-sa/4.0/).
