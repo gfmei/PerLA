@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="description" content="PerLA: Perceptive 3D Language Assistant">
+  <meta name="keywords" content="PerLA, 3D Language Assistant">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PerLA</title>
+
+  <link rel="stylesheet" href="./static/css/bulma.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-carousel.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-slider.min.css">
+  <link rel="stylesheet" href="./static/css/fontawesome.all.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="./static/css/index.css">
+  <link rel="icon" href="./static/images/pearls.png" type="image/png">
+
+  <!-- MathJax -->
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+
+<body>
+  <section class="hero">
+    <div class="hero-body">
+      <div class="container is-max-desktop">
+        <div class="columns is-centered">
+          <div class="column has-text-centered">
+            <h1 class="title is-1 publication-title">
+              PerLA
+              <img src="./static/images/pearls.png" alt="PerLA Logo" style="height: 1em; vertical-align: middle; margin: 0 0.3em;" />
+              Perceptive 3D Language Assistant
+            </h1>
+            <div class="is-size-5 publication-authors">
+              <span class="author-block">
+                <a href="https://scholar.google.com/citations?user=VsmIGqsAAAAJ" target="_blank">Guofeng Mei</a>\(^{1,\dagger}\),
+              </span>
+              <span class="author-block">
+                <a href="https://scholar.google.com/citations?user=djO2pVUAAAAJ" target="_blank">Wei Lin</a>\(^2\),
+              </span>
+              <span class="author-block">
+                <a href="https://scholar.google.com/citations?user=djO2pVUAAAAJ" target="_blank">Luigi Riz</a>\(^1\),
+              </span>
+              <span class="author-block">
+                <a href="https://scholar.google.com/citations?user=4t9fSdwAAAAJ" target="_blank">Yujiao Wu</a>\(^3\),
+              </span>
+              <span class="author-block">
+                <a href="https://scholar.google.com/citations?user=BQ7li6AAAAAJ" target="_blank">Fabio Poiesi</a>\(^1\),
+              </span>
+              <span class="author-block">
+                <a href="https://scholar.google.com/citations?user=KBZ3zrEAAAAJ" target="_blank">Yiming Wang</a>\(^1\)
+              </span>
+            </div>
+            <div class="is-size-5 publication-authors">
+              <span class="author-block">\(^1\)Fondazione Bruno Kessler, Italy;</span>
+              <span class="author-block">\(^2\)JKU Linz, Austria;</span>
+              <span class="author-block">\(^3\)CSIRO, Australia</span>
+            </div>
+            <div class="is-size-6 publication-authors">
+              <tt class="author-block">gmei@fbk.eu</tt>
+            </div>
+            <div class="column has-text-centered">
+              <div class="publication-links">
+                <span class="link-block">
+                  <a href="https://arxiv.org/pdf/2312.02244.pdf"
+                    class="external-link button is-normal is-rounded is-dark" target="_blank">
+                    <span class="icon">
+                      <i class="ai ai-arxiv"></i>
+                    </span>
+                    <span>arXiv</span>
+                  </a>
+                </span>
+                <span class="link-block">
+                  <a href="https://github.com/gfmei/PerLA" class="external-link button is-normal is-rounded is-dark"
+                    target="_blank">
+                    <span class="icon">
+                      <i class="fab fa-github"></i>
+                    </span>
+                    <span>Code</span>
+                  </a>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <h2 class="title is-3">Abstract</h2>
+          <div class="content has-text-justified">
+            <p>
+              Enabling Large Language Models (LLMs) to understand the 3D physical world is an emerging yet challenging research direction.
+              Current strategies for processing point clouds typically downsample the scene or divide it into smaller parts for separate analysis.
+              However, both approaches risk losing key local details or global contextual information.
+            </p>
+            <p>
+              This paper introduces PerLA, a 3D language assistant designed to be perceptive to both details and context,
+              making visual representations more informative for the LLM.
+            </p>
+            <p><b>
+              PerLA captures high-resolution (local) details in parallel from different point cloud areas and integrates
+              them with (global) context obtained from a lower-resolution whole point cloud.
+              We present a novel algorithm that preserves point cloud locality through the Hilbert curve and effectively
+              aggregates local-to-global information via cross-attention and a graph neural network.
+              </b></p>
+            <p>
+              PerLA outperforms state-of-the-art 3D language assistants, with gains of up to +1.34 CiDEr on ScanQA for question answering,
+              and +4.22 on ScanRefer and +3.88 on Nr3D for dense captioning.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+ <hr>
+
+  <!-- 3D Question Answering -->
+  <section class="section">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-full-width">
+          <h2 class="title is-3">3D Question Answering on ScanQA <small>[<a
+                href="https://github.com/ScanQA/ScanQA" target="_blank">1</a>]</small></h2>
+          <img src="./static/images/scanqa.png" alt="3D Question Answering on ScanQA Results" />
+          <figcaption>
+            PerLA successfully identifies and reasons about objects and their relationships within the scene,
+            outperforming LL3DA [<a href="https://arxiv.org/pdf/2311.18651" target="_blank">2</a>].
+          </figcaption>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- 3D Dense Captioning: ScanRefer -->
+  <section class="section">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-full-width">
+          <h2 class="title is-3">3D Dense Captioning on ScanRefer <small>[<a
+                href="https://arxiv.org/abs/1912.08830" target="_blank">3</a>]</small></h2>
+          <img src="./static/images/scanrefer.png" alt="3D Dense Captioning on ScanRefer Results" />
+          <figcaption>
+            PerLA demonstrates robust descriptive capabilities on ScanRefer, surpassing LL3DA [<a
+              href="https://arxiv.org/pdf/2311.18651" target="_blank">4</a>] by effectively capturing object attributes
+            such as “the rectangular brown desk” and “the round table in the center of the room.”
+          </figcaption>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- 3D Dense Captioning: Nr3D -->
+  <section class="section">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-full-width">
+          <h2 class="title is-3">3D Dense Captioning on Nr3D <small>[<a
+                href="https://www.ecva.net/papers/eccv_2020/papers_ECCV/papers/123460409.pdf" target="_blank">5</a>]</small></h2>
+          <img src="./static/images/nr3d.png" alt="3D Dense Captioning on Nr3D Results" />
+          <figcaption>
+            PerLA showcases fine-grained spatial reasoning on Nr3D by identifying intricate object relationships within
+            complex scenes, outperforming LL3DA [<a href="https://arxiv.org/pdf/2311.18651" target="_blank">6</a>].
+          </figcaption>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+
+  <hr>
+
+  <section class="section" id="BibTeX">
+    <div class="container is-max-desktop content">
+      <h2 class="title">BibTeX</h2>
+      <pre><code>@inproceedings{mei2024geometrically,
+        title     = {Geometrically-driven Aggregation for Zero-shot 3D Point Cloud Understanding},
+        author    = {Mei, Guofeng and Riz, Luigi and Wang, Yiming and Poiesi, Fabio},
+        booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+        year      = {2024}
+    }</code></pre>
+    </div>
+  </section>
+
+
+  <!-- References -->
+  <section class="section">
+    <div class="container">
+      <h3 class="title is-5">References</h3>
+      <ol>
+        <li><a href="https://arxiv.org/abs/2301.12597" target="_blank">BLIP-2: Bootstrapping Language-Image Pre-training
+          with Frozen Image Encoders and Large Language Models</a></li>
+        <li><a href="https://github.com/ScanQA/ScanQA" target="_blank">ScanQA: 3D Question Answering Dataset and Benchmark</a></li>
+        <li><a href="https://arxiv.org/pdf/2311.18651" target="_blank">LL3DA: Leveraging Language for 3D Applications</a></li>
+        <li><a href="https://arxiv.org/abs/1912.08830" target="_blank">ScanRefer: 3D Object Localization and Description</a></li>
+        <li><a href="https://www.ecva.net/papers/eccv_2020/papers_ECCV/papers/123460409.pdf" target="_blank">
+          ReferIt3D: Neural Listeners for Fine-Grained 3D Object Identification in Real-World Scenes</a></li>
+      </ol>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="content has-text-centered">
+        <!-- Link to Paper -->
+        <a class="icon-link" href="https://arxiv.org/abs/2312.02244" target="_blank" title="View Paper on arXiv">
+          <i class="fas fa-file-pdf fa-2x"></i>
+        </a>
+        <!-- Link to GitHub -->
+        <a class="icon-link" href="https://github.com/gfmei/PerLA" class="external-link" target="_blank" title="View Project on GitHub">
+          <i class="fab fa-github fa-2x"></i>
+        </a>
+      </div>
+      <div class="columns is-centered" style="margin-top: 20px;">
+        <div class="column is-8">
+          <div class="content has-text-centered">
+            <p>
+              This website is licensed under a
+              <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/" target="_blank">
+                Creative Commons Attribution-ShareAlike 4.0 International License
+              </a>.
+            </p>
+            <p>
+              Template adapted from
+              <a href="https://github.com/nerfies/nerfies.github.io" target="_blank">Nerfies</a>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+
+</body>
+
+</html>
