@@ -25,7 +25,7 @@ We welcome and encourage contributions to the PerLA project! If you'd like to co
 2. Create a new branch for your changes.
 3. Submit a pull request with a detailed description of your modifications.
 
-Before contributing, please review our [contribution guidelines](https://github.com/gfmei/PerLA.github.io/blob/main/CONTRIBUTING.md).
+Before contributing, please review our [contribution guidelines](https://github.com/gfmei/PerLA/blob/main/CONTRIBUTING.md).
 
 ## Acknowledgments
 We extend our gratitude to all contributors and supporters of the PerLA project. Your valuable insights and contributions drive innovation and progress in the field of **3D and language-based AI systems**.
@@ -38,5 +38,5 @@ For questions, issues, or collaboration opportunities:
 
 ## Quick Links
 - [PerLA Website](https://gfmei.github.io/PerLA/)
-- [PerLA Code Repository](https://github.com/gfmei/PerLA.github.io)
+- [PerLA Code Repository](https://github.com/gfmei/PerLA)
 - [PerLA Paper on arXiv](https://arxiv.org/abs/2312.02244)
