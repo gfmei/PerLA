@@ -3,22 +3,22 @@
 
 <head>
     <meta charset="utf-8">
-    <meta name="description" content="PerLA: Perceptive 3D Language Assistant">
-    <meta name="keywords" content="PerLA, 3D Language Assistant">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta content="PerLA: Perceptive 3D Language Assistant" name="description">
+    <meta content="PerLA, 3D Language Assistant" name="keywords">
+    <meta content="width=device-width, initial-scale=1" name="viewport">
     <title>PerLA</title>
 
-    <link rel="stylesheet" href="./static/css/bulma.min.css">
-    <link rel="stylesheet" href="./static/css/bulma-carousel.min.css">
-    <link rel="stylesheet" href="./static/css/bulma-slider.min.css">
-    <link rel="stylesheet" href="./static/css/fontawesome.all.min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+    <link href="./static/css/bulma.min.css" rel="stylesheet">
+    <link href="./static/css/bulma-carousel.min.css" rel="stylesheet">
+    <link href="./static/css/bulma-slider.min.css" rel="stylesheet">
+    <link href="./static/css/fontawesome.all.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="./static/css/index.css">
-    <link rel="icon" href="./static/images/pearls.png" type="image/png">
+    <link href="./static/css/index.css" rel="stylesheet">
+    <link href="./static/images/pearls.png" rel="icon" type="image/png">
 
     <!-- MathJax -->
-    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script async id="MathJax-script" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
 
 <body>
@@ -30,7 +30,7 @@
                     <!-- Title Section -->
                     <h1 class="title is-1 publication-title">
                         PerLA
-                        <img src="./static/images/pearls.png" alt="PerLA Logo"
+                        <img alt="PerLA Logo" src="./static/images/pearls.png"
                              style="height: 1em; vertical-align: middle; margin: 0 0.3em;"/>
                         Perceptive 3D Language Assistant
                     </h1>
@@ -71,8 +71,8 @@
                     <!-- Links Section -->
                     <div class="publication-links">
                         <span class="link-block">
-                            <a href="https://arxiv.org/pdf/2312.02244.pdf"
-                               class="external-link button is-normal is-rounded is-dark" target="_blank">
+                            <a class="external-link button is-normal is-rounded is-dark"
+                               href="https://arxiv.org/pdf/xxxxxxx.pdf" target="_blank">
                                 <span class="icon" style="color: white;">
                                     <i class="ai ai-arxiv"></i>
                                 </span>
@@ -80,9 +80,9 @@
                             </a>
                         </span>
                         <span class="link-block">
-                            <a href="https://github.com/gfmei/PerLA"
-                               class="external-link button is-normal is-rounded" target="_blank"
-                               style="background-color: lightgray; color: black; border: none; padding: 10px; display: inline-flex; align-items: center;">
+                            <a class="external-link button is-normal is-rounded"
+                               href="https://github.com/gfmei/PerLA" style="background-color: lightgray; color: black; border: none; padding: 10px; display: inline-flex; align-items: center;"
+                               target="_blank">
                                 <span class="icon" style="color: black;">
                                     <i class="fab fa-github"></i>
                                 </span>
@@ -144,7 +144,7 @@
             <div class="column is-full-width">
                 <h2 class="title is-3">3D Question Answering on ScanQA <small>[<a
                         href="https://github.com/ScanQA/ScanQA" target="_blank">1</a>]</small></h2>
-                <img src="./static/images/scanqa.png" alt="3D Question Answering on ScanQA Results"/>
+                <img alt="3D Question Answering on ScanQA Results" src="./static/images/scanqa.png"/>
                 <figcaption>
                     PerLA successfully identifies and reasons about objects and their relationships within the scene,
                     outperforming LL3DA [<a href="https://arxiv.org/pdf/2311.18651" target="_blank">2</a>].
@@ -163,7 +163,7 @@
             <div class="column is-full-width">
                 <h2 class="title is-3">3D Dense Captioning on ScanRefer <small>[<a
                         href="https://arxiv.org/abs/1912.08830" target="_blank">3</a>]</small></h2>
-                <img src="./static/images/scanrefer.png" alt="3D Dense Captioning on ScanRefer Results"/>
+                <img alt="3D Dense Captioning on ScanRefer Results" src="./static/images/scanrefer.png"/>
                 <figcaption>
                     PerLA demonstrates robust descriptive capabilities on ScanRefer, surpassing LL3DA [<a
                         href="https://arxiv.org/pdf/2311.18651" target="_blank">4</a>] by effectively capturing object
@@ -185,7 +185,7 @@
                 <h2 class="title is-3">3D Dense Captioning on Nr3D <small>[<a
                         href="https://www.ecva.net/papers/eccv_2020/papers_ECCV/papers/123460409.pdf"
                         target="_blank">5</a>]</small></h2>
-                <img src="./static/images/nr3d.png" alt="3D Dense Captioning on Nr3D Results"/>
+                <img alt="3D Dense Captioning on Nr3D Results" src="./static/images/nr3d.png"/>
                 <figcaption>
                     PerLA showcases fine-grained spatial reasoning on Nr3D by identifying intricate object relationships
                     within
@@ -203,12 +203,16 @@
 <section class="section" id="BibTeX">
     <div class="container is-max-desktop content">
         <h2 class="title">BibTeX</h2>
-        <pre><code>@inproceedings{mei2024PerLA,
-        title     = {PerLA: Perceptive 3D Language Assistant},
-        author    = {Guofeng Mei, and Wei Lin, and Luigi Riz, and Yujiao Wu, and Fabio Poiesi},
-        booktitle = {arxiv},
-        year      = {2024}
-    }</code></pre>
+        <pre>
+            <code>
+            @article{mei2024perla,
+                title     = {PerLA: Perceptive 3D Language Assistant},
+                author    = {Guofeng Mei and Wei Lin and Luigi Riz and Yujiao Wu and Fabio Poiesi and Yiming Wang},
+                journal   = {arXiv preprint arXiv:xxxxx}, % Replace with actual arXiv ID
+                year      = {2024}
+            }
+            </code>
+        </pre>
     </div>
 </section>
 
@@ -241,7 +245,7 @@
                 <i class="fas fa-file-pdf fa-2x"></i>
             </a>
             <!-- Link to GitHub -->
-            <a class="icon-link" href="https://github.com/gfmei/PerLA" class="external-link" target="_blank"
+            <a class="icon-link" class="external-link" href="https://github.com/gfmei/PerLA" target="_blank"
                title="View Project on GitHub">
                 <i class="fab fa-github fa-2x"></i>
             </a>
@@ -251,7 +255,7 @@
                 <div class="content has-text-centered">
                     <p>
                         This website is licensed under a
-                        <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/" target="_blank">
+                        <a href="http://creativecommons.org/licenses/by-sa/4.0/" rel="license" target="_blank">
                             Creative Commons Attribution-ShareAlike 4.0 International License
                         </a>.
                     </p>
