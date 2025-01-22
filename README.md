@@ -31,7 +31,7 @@ For questions, issues, or collaboration opportunities:
 ## Quick Links
 - [PerLA Website](https://gfmei.github.io/PerLA/)
 - [PerLA Code Repository](https://github.com/gfmei/PerLA)
-- [PerLA Paper on arXiv](https://arxiv.org/abs/xxxxx)
+- [PerLA Paper on arXiv](https://arxiv.org/abs/2411.19774)
 
 
 ## Website License
