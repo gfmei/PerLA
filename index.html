@@ -137,6 +137,43 @@
 
 <hr>
 
+<!-- Method Section -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-full-width">
+        <h2 class="title is-3">Method</h2>
+        <img src="./static/images/block_diagram.png" alt="Architecture of PerLA" />
+        <div class="content has-text-justified" style="margin-top: 2rem;">
+          <p>
+            Our method takes as inputs: <i>(i)</i> a text prompt in natural language, <i>(ii)</i> the 3D scene represented as a point cloud, and <i>(iii)</i> a visual prompt provided as either a user click or a bounding box.
+          </p>
+          <p>
+            The text prompt is processed by a <i>text prompt encoder</i>, which generates text representations. These representations are input to both the <i>Large Language Model (LLM)</i> and the <i>multimodal adapter (MMA)</i>.
+              The text encoder is a transformer architecture based on BLIP-2.
+          </p>
+          <p>
+            The 3D scene, represented as a point cloud, is processed by our <i>perceptive scene encoder</i>.
+              This encoder generates scene representations that are utilized by the MMA and subsequent processing components. Details of the perceptive scene encoder will be provided in the following sections.
+          </p>
+          <p>
+            The visual prompt, whether a user click or a bounding box, is handled by the <i>visual prompt encoder</i>.
+              By integrating representations from the perceptive scene encoder, the visual prompt encoder outputs refined scene representations,
+              which are subsequently processed by the MMA. For more details on visual prompts, please refer to the supplementary material.
+          </p>
+          <p>
+            The MMA takes the multimodal representations as input and outputs tokens for the LLM. The MMA is implemented as a Q-former.
+              Its outputs are projected into the LLM's representation space through a linear projector.
+              Finally, these projected representations are processed by the LLM to generate the output response.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr>
+
 <!-- 3D Question Answering -->
 <section class="section">
     <div class="container is-max-desktop">
@@ -166,7 +203,7 @@
                 <img alt="3D Dense Captioning on ScanRefer Results" src="./static/images/scanrefer.png"/>
                 <figcaption>
                     PerLA demonstrates robust descriptive capabilities on ScanRefer, surpassing LL3DA [<a
-                        href="https://arxiv.org/pdf/2311.18651" target="_blank">2</a>] by effectively capturing object
+                        href="https://arxiv.org/pdf/2311.18651" target="_blank">4</a>] by effectively capturing object
                     attributes
                     such as “the rectangular brown desk” and “the round table in the center of the room.”
                 </figcaption>
@@ -190,7 +227,7 @@
                     PerLA showcases fine-grained spatial reasoning on Nr3D by identifying intricate object relationships
                     within
                     complex scenes, outperforming LL3DA [<a href="https://arxiv.org/pdf/2311.18651"
-                                                            target="_blank">2</a>].
+                                                            target="_blank">6</a>].
                 </figcaption>
             </div>
         </div>
@@ -205,12 +242,11 @@
         <h2 class="title">BibTeX</h2>
         <pre>
             <code>
-            @article{mei2024perla,
-                title     = {PerLA: Perceptive 3D Language Assistant},
-                author    = {Guofeng Mei and Wei Lin and Luigi Riz and Yujiao Wu and Fabio Poiesi and Yiming Wang},
-                journal   = {arXiv preprint arXiv:2411.19774},
-                year      = {2024}
-            }
+        @article{mei2024perla,
+          title={PerLA: Perceptive 3D language assistant},
+          author={Mei, Guofeng and Lin, Wei and Riz, Luigi and Wu, Yujiao and Poiesi, Fabio and Wang, Yiming},
+          journal={arXiv preprint arXiv:2411.19774},
+          year={2024}}
             </code>
         </pre>
     </div>
