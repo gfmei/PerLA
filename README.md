@@ -2,6 +2,10 @@
 
 Welcome to the official repository for **PerLA (Perceptive 3D Language Assistant)**, accepted by CVPR2025.
 
+## News
+- The paper has been accepted by CVPR 2025 🔥.
+- Code stay tuned for updates!
+
 ## About PerLA
 **PerLA** is a cutting-edge framework designed to integrate **3D perception** with **natural language understanding**, enabling advanced scene comprehension and interaction capabilities. By leveraging innovative algorithms and models, PerLA bridges the gap between 3D spatial data and language processing to provide state-of-the-art performance in tasks such as:
 - 3D question answering
