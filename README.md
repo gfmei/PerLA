@@ -1,6 +1,6 @@
 # PerLA: Perceptive 3D Language Assistant
 
-Welcome to the official repository for **PerLA (Perceptive 3D Language Assistant)**! This repository hosts the source code, documentation, and resources for the [PerLA project](https://gfmei.github.io/PerLA/).
+Welcome to the official repository for **PerLA (Perceptive 3D Language Assistant)**, accepted by CVPR2025.
 
 ## About PerLA
 **PerLA** is a cutting-edge framework designed to integrate **3D perception** with **natural language understanding**, enabling advanced scene comprehension and interaction capabilities. By leveraging innovative algorithms and models, PerLA bridges the gap between 3D spatial data and language processing to provide state-of-the-art performance in tasks such as:
