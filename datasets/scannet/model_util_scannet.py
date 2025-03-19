@@ -7,8 +7,8 @@ import sys
 import os
 
 sys.path.append(os.path.join(os.getcwd(), os.pardir, "lib"))  # HACK add the lib folder
-from lib.config import CONF
-from utils.box_util import get_3d_box
+from config import CONF
+from libs.box_util import get_3d_box
 
 
 def in_hull(p, hull):

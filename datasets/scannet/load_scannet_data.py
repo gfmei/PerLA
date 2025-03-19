@@ -34,13 +34,14 @@ def read_segmentation(filename):
     with open(filename) as f:
         data = json.load(f)
         num_verts = len(data['segIndices'])
+        seg_indices = np.array(data["segIndices"])
         for i in range(num_verts):
             seg_id = data['segIndices'][i]
             if seg_id in seg_to_verts:
                 seg_to_verts[seg_id].append(i)
             else:
                 seg_to_verts[seg_id] = [i]
-    return seg_to_verts, num_verts
+    return seg_to_verts, num_verts, seg_indices
 
 
 def export(mesh_file, agg_file, seg_file, meta_file, label_map_file, output_file=None):
@@ -50,6 +51,7 @@ def export(mesh_file, agg_file, seg_file, meta_file, label_map_file, output_file
     box as (cx,cy,cz,dx,dy,dz,semantic_label)
     """
     label_map = scannet_utils.read_label_mapping(label_map_file, label_from='raw_category', label_to='nyu40id')
+    # print('label_map', label_map)
     # mesh_vertices = scannet_utils.read_mesh_vertices_rgb(mesh_file)
     mesh_vertices = scannet_utils.read_mesh_vertices_rgb_normal(mesh_file)
 
@@ -72,14 +74,19 @@ def export(mesh_file, agg_file, seg_file, meta_file, label_map_file, output_file
         aligned_vertices = mesh_vertices
 
     # Load semantic and instance labels
+    seg_indices = None
     if os.path.isfile(agg_file):
         object_id_to_segs, label_to_segs = read_aggregation(agg_file)
-        seg_to_verts, num_verts = read_segmentation(seg_file)
+        seg_to_verts, num_verts, seg_indices = read_segmentation(seg_file)
 
         label_ids = np.zeros(shape=(num_verts), dtype=np.uint32)  # 0: unannotated
         object_id_to_label_id = {}
         for label, segs in label_to_segs.items():
-            label_id = label_map[label]
+            try:
+                label_id = label_map[label]
+            except Exception as e:
+                print(e, label)
+                label_id = label_map['sticker']
             for seg in segs:
                 verts = seg_to_verts[seg]
                 label_ids[verts] = label_id
@@ -152,8 +159,10 @@ def export(mesh_file, agg_file, seg_file, meta_file, label_map_file, output_file
         np.save(output_file + '_ins_label.npy', instance_ids)
         np.save(output_file + '_bbox.npy', instance_bboxes)
         np.save(output_file + '_aligned_bbox.npy', instance_bboxes)
+        np.save(output_file + '_spt.npy', seg_indices.reshape(-1))
 
-    return mesh_vertices, aligned_vertices, label_ids, instance_ids, instance_bboxes, aligned_instance_bboxes
+    return (mesh_vertices, aligned_vertices, label_ids, instance_ids, instance_bboxes,
+            aligned_instance_bboxes, seg_indices.reshape(-1))
 
 
 def main():

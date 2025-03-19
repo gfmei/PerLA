@@ -6,14 +6,13 @@ Batch mode in loading Scannet scenes with vertices and ground truth labels for s
 Usage example: python ./batch_load_scannet_data.py
 """
 
-import os
-import sys
 import datetime
-import numpy as np
-from load_scannet_data import export
-import pdb
+import os
 
-SCANNET_DIR = 'scans'
+import numpy as np
+
+from load_scannet_data import export
+
 SCAN_NAMES = sorted([line.rstrip() for line in open('meta_data/scannetv2.txt')])
 LABEL_MAP_FILE = 'meta_data/scannetv2-labels.combined.tsv'
 DONOTCARE_CLASS_IDS = np.array([])
@@ -21,7 +20,6 @@ OBJ_CLASS_IDS = np.array(
     [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33,
      34, 35, 36, 37, 38, 39, 40])  # exclude wall (1), floor (2), ceiling (22)
 MAX_NUM_POINT = 50000
-OUTPUT_FOLDER = './scannet_data'
 
 
 def export_one_scan(scan_name, output_filename_prefix):
@@ -30,7 +28,8 @@ def export_one_scan(scan_name, output_filename_prefix):
     seg_file = os.path.join(SCANNET_DIR, scan_name, scan_name + '_vh_clean_2.0.010000.segs.json')
     meta_file = os.path.join(SCANNET_DIR, scan_name,
                              scan_name + '.txt')  # includes axisAlignment info for the train set scans.
-    mesh_vertices, aligned_vertices, semantic_labels, instance_labels, instance_bboxes, aligned_instance_bboxes = export(
+    (mesh_vertices, aligned_vertices, semantic_labels, instance_labels, instance_bboxes,
+     aligned_instance_bboxes, spt_labels) = export(
         mesh_file, agg_file, seg_file, meta_file, LABEL_MAP_FILE, None)
 
     mask = np.logical_not(np.in1d(semantic_labels, DONOTCARE_CLASS_IDS))
@@ -58,6 +57,7 @@ def export_one_scan(scan_name, output_filename_prefix):
         aligned_vertices = aligned_vertices[choices, :]
         semantic_labels = semantic_labels[choices]
         instance_labels = instance_labels[choices]
+        spt_labels = spt_labels[choices]
 
     print("Shape of points: {}".format(mesh_vertices.shape))
 
@@ -67,17 +67,18 @@ def export_one_scan(scan_name, output_filename_prefix):
     np.save(output_filename_prefix + '_ins_label.npy', instance_labels)
     np.save(output_filename_prefix + '_bbox.npy', instance_bboxes)
     np.save(output_filename_prefix + '_aligned_bbox.npy', aligned_instance_bboxes)
+    np.save(output_filename_prefix + '_spt.npy', spt_labels)
 
 
-def batch_export():
-    if not os.path.exists(OUTPUT_FOLDER):
-        print('Creating new data folder: {}'.format(OUTPUT_FOLDER))
-        os.mkdir(OUTPUT_FOLDER)
+def batch_export(scan_dir, out_dir):
+    if not os.path.exists(out_dir):
+        print('Creating new data folder: {}'.format(out_dir))
+        os.mkdir(out_dir)
 
     for scan_name in SCAN_NAMES:
-        if not os.path.exists(os.path.join(SCANNET_DIR, scan_name)):
+        if not os.path.exists(os.path.join(scan_dir, scan_name)):
             continue
-        output_filename_prefix = os.path.join(OUTPUT_FOLDER, scan_name)
+        output_filename_prefix = os.path.join(out_dir, scan_name)
         # if os.path.exists(output_filename_prefix + '_vert.npy'): continue
 
         print('-' * 20 + 'begin')
@@ -90,6 +91,6 @@ def batch_export():
 
 
 if __name__ == '__main__':
-    batch_export()
-    SCANNET_DIR = 'scans_test'
-    batch_export()
+    SCANNET_DIR = '/data/disk1/data/scannet/scans'
+    OUTPUT_FOLDER = '/data/disk1/data/scannet/scannet_llm'
+    batch_export(SCANNET_DIR, OUTPUT_FOLDER)
