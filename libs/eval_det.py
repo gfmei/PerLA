@@ -17,7 +17,7 @@
     Ref: https://raw.githubusercontent.com/rbgirshick/py-faster-rcnn/master/lib/datasets/voc_eval.py
 """
 import numpy as np
-from utils.box_util import box3d_iou
+from libs.box_util import box3d_iou
 
 
 def voc_ap(rec, prec, use_07_metric=False):

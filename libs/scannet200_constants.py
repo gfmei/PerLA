@@ -289,8 +289,13 @@ SCANNET_COLOR_MAP_200 = {
     1191: (42., 94., 198.),
 }
 
-# For instance segmentation the non-object categories
+### For instance segmentation the non-object categories ###
 VALID_PANOPTIC_IDS = (1, 3)
 
-CLASS_LABELS_PANOPTIC = ('wall', 'floor')
+CLASS_LABELS_PANOPTIC = ("wall", "floor")
+
+
+# Reconstruct the dictionary with new keys
+new_keys = range(len(SCANNET_COLOR_MAP_200))
+SCANNET_COLOR_MAP_200 = {k: SCANNET_COLOR_MAP_200[v] for k, v in zip(new_keys, sorted(SCANNET_COLOR_MAP_200.keys()))}
 

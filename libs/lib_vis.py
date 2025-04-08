@@ -3,8 +3,8 @@ from sklearn.decomposition import PCA
 import numpy as np
 import matplotlib.pyplot as plt
 import open3d as o3d
-from data.scannet200_constants import SCANNET_COLOR_MAP_200
-from utils.box_util import flip_axis_to_camera_np
+from libs.scannet200_constants import SCANNET_COLOR_MAP_200
+from libs.box_util import flip_axis_to_camera_np
 
 
 def get_colored_image_pca_sep(feature, name):
@@ -90,7 +90,8 @@ def get_colored_point_cloud_pca_sep(xyz, feature, name=None):
 
 def visualize_clusters(point_cloud, labels, name=None):
     # Generate a color map where each cluster has a unique color
-    colors = np.array([SCANNET_COLOR_MAP_200.get(label, (255.0, 255.0, 255.0)) for label in labels]) / 255.0
+    colors = np.array([SCANNET_COLOR_MAP_200.get(
+        label % len(SCANNET_COLOR_MAP_200), (255.0, 255.0, 255.0)) for label in labels]) / 255.0
 
     # Create an Open3D point cloud object
     pcd = o3d.geometry.PointCloud()
@@ -98,14 +99,17 @@ def visualize_clusters(point_cloud, labels, name=None):
     pcd.colors = o3d.utility.Vector3dVector(colors)
 
     # Visualize the point cloud
-    # o3d.visualization.draw_geometries([pcd])
+    o3d.visualization.draw_geometries([pcd])
     o3d.io.write_point_cloud(name + '.ply', pcd)
 
 
 
 def vis_points(points, name):
     # Convert PyTorch tensor to NumPy array
-    point_cloud_np = points.numpy()
+    try:
+        point_cloud_np = points.numpy()
+    except Exception:
+        point_cloud_np = points
 
     # Create Open3D PointCloud object
     pcd = o3d.geometry.PointCloud()
@@ -144,7 +148,7 @@ def visualize_multiple_point_clouds(points, feats, name='output'):
         pcd.points = o3d.utility.Vector3dVector(xyz)
 
         # Assign colors (normalize RGB values to [0, 1])
-        colors = feat[:, :3]
+        colors = feat[:, :3] / 255.0
         pcd.colors = o3d.utility.Vector3dVector(colors)
 
         # Assign normals

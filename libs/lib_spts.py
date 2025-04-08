@@ -1,4 +1,38 @@
 import torch
+import numpy as np
+
+def num_to_natural_numpy(group_ids, void_number=-1):
+    """
+    Convert group ids to natural numbers using NumPy, handling void numbers as specified.
+    Equivalent to the provided PyTorch implementation.
+    """
+    group_ids_array = np.array(group_ids, dtype=int)
+
+    if void_number == -1:
+        # [-1,-1,0,3,4,0,6] -> [-1,-1,0,1,2,0,3]
+        if np.all(group_ids_array == -1):
+            return group_ids_array
+        array_ids = group_ids_array.copy()
+
+        unique_values = np.unique(array_ids[array_ids != -1])
+        mapping = np.full(np.max(unique_values) + 2, -1, dtype=int)
+        mapping[unique_values + 1] = np.arange(len(unique_values))
+        array_ids = mapping[array_ids + 1]
+
+    elif void_number == 0:
+        # [0,3,4,0,6] -> [0,1,2,0,3]
+        if np.all(group_ids_array == 0):
+            return group_ids_array
+        array_ids = group_ids_array.copy()
+
+        unique_values = np.unique(array_ids[array_ids != 0])
+        mapping = np.zeros(np.max(unique_values) + 2, dtype=int)
+        mapping[unique_values] = np.arange(len(unique_values)) + 1
+        array_ids = mapping[array_ids]
+    else:
+        raise ValueError("void_number must be -1 or 0")
+
+    return array_ids
 
 
 def num_to_natural_torch(group_ids, void_number=-1):
@@ -157,32 +191,33 @@ def masked_optimal_transport(P, Q, P_labels, Q_labels, a=None, b=None, reg=0.01,
     return P_opt
 
 
-# # Example Usage:
-# B, N, K = 2, 5, 3  # Example batch, original points, downsampled points
-# P = torch.rand(B, N, 3)  # Original point cloud (B, N, 3)
-# Q = torch.rand(B, K, 3)  # Downsampled point cloud (B, K, 3)
-# P_labels = torch.tensor([[1, 2, 1, 3, 2], [4, 5, 4, 6, 5]])  # Shape (B, N)
-# Q_labels = torch.tensor([[1, 2, 3], [4, 5, 6]])  # Shape (B, K)
-#
-# P_opt = masked_optimal_transport(P, Q, P_labels, Q_labels)
-#
-# print("Optimal Transport Plan (Masked):")
-# print(P_opt)
+if __name__ == '__main__':
+    # # Example Usage:
+    # B, N, K = 2, 5, 3  # Example batch, original points, downsampled points
+    # P = torch.rand(B, N, 3)  # Original point cloud (B, N, 3)
+    # Q = torch.rand(B, K, 3)  # Downsampled point cloud (B, K, 3)
+    # P_labels = torch.tensor([[1, 2, 1, 3, 2], [4, 5, 4, 6, 5]])  # Shape (B, N)
+    # Q_labels = torch.tensor([[1, 2, 3], [4, 5, 6]])  # Shape (B, K)
+    #
+    # P_opt = masked_optimal_transport(P, Q, P_labels, Q_labels)
+    #
+    # print("Optimal Transport Plan (Masked):")
+    # print(P_opt)
 
-# Example usage:
-B, N, K, D = 2, 5, 3, 4  # Example dimensions
-P_features = torch.rand(B, N, D)  # Features for P
-P_labels = torch.tensor([[1, 2, 1, 3, 2], [4, 5, 4, 6, 5]])  # Superpoint labels for P (B, N)
-Q_labels = torch.tensor([[1, 2, 3], [4, 5, 6]])  # Superpoint labels for Q (B, K)
+    # Example usage:
+    B, N, K, D = 2, 5, 3, 4  # Example dimensions
+    P_features = torch.rand(B, N, D)  # Features for P
+    P_labels = torch.tensor([[1, 2, 1, 3, 2], [4, 5, 4, 6, 5]])  # Superpoint labels for P (B, N)
+    Q_labels = torch.tensor([[1, 2, 3], [4, 5, 6]])  # Superpoint labels for Q (B, K)
 
-# Generate mask matrix
-M = generate_mask(P_labels, Q_labels)  # (B, N, K)
+    # Generate mask matrix
+    M = generate_mask(P_labels, Q_labels)  # (B, N, K)
 
-# Aggregate features
-F_Q_mean = aggregate_features(P_features, M, method="mean")
-F_Q_max = aggregate_features(P_features, M, method="max")
-F_Q_weighted = aggregate_features(P_features, M, method="softmax_weighted")
+    # Aggregate features
+    F_Q_mean = aggregate_features(P_features, M, method="mean")
+    F_Q_max = aggregate_features(P_features, M, method="max")
+    F_Q_weighted = aggregate_features(P_features, M, method="softmax_weighted")
 
-print("Aggregated Features (Mean Pooling):", F_Q_mean)
-print("Aggregated Features (Max Pooling):", F_Q_max)
-print("Aggregated Features (Softmax Weighted):", F_Q_weighted)
+    print("Aggregated Features (Mean Pooling):", F_Q_mean)
+    print("Aggregated Features (Max Pooling):", F_Q_max)
+    print("Aggregated Features (Softmax Weighted):", F_Q_weighted)

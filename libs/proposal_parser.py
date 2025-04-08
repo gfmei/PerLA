@@ -5,19 +5,10 @@
 
 """ Helper functions and class to calculate Average Precisions for 3D object detection.
 """
-import logging
-import os
-import sys
-from collections import OrderedDict
 
 import numpy as np
-import scipy.special as scipy_special
-import torch
 
-from utils.box_util import (extract_pc_in_box3d, flip_axis_to_camera_np,
-                            get_3d_box, get_3d_box_batch)
-from utils.eval_det import eval_det_multiprocessing, get_iou_obb
-from utils.nms import nms_2d_faster, nms_3d_faster, nms_3d_faster_samecls
+from libs.nms import nms_2d_faster, nms_3d_faster, nms_3d_faster_samecls
 
 
 def flip_axis_to_depth(pc):
@@ -28,16 +19,16 @@ def flip_axis_to_depth(pc):
 
 
 def get_ap_config_dict(
-    remove_empty_box=True,
-    use_3d_nms=True,
-    nms_iou=0.25,
-    use_old_type_nms=False,
-    cls_nms=True,
-    per_class_proposal=True,
-    use_cls_confidence_only=False,
-    conf_thresh=0.05,
-    no_nms=False,
-    dataset_config=None,
+        remove_empty_box=True,
+        use_3d_nms=True,
+        nms_iou=0.25,
+        use_old_type_nms=False,
+        cls_nms=True,
+        per_class_proposal=True,
+        use_cls_confidence_only=False,
+        conf_thresh=0.05,
+        no_nms=False,
+        dataset_config=None,
 ):
     """
     Default mAP evaluation settings for VoteNet
@@ -72,10 +63,11 @@ def ez_extract_pc_in_box3d(pc, box3d):
     inds = np.arange(len(pc))[per_point_mask]
     return pc_in_box, inds
 
+
 # This is exactly the same as VoteNet so that we can compare evaluations.
 def parse_predictions(
-    predicted_boxes, sem_cls_probs, objectness_probs, point_cloud, 
-    config_dict=get_ap_config_dict()
+        predicted_boxes, sem_cls_probs, objectness_probs, point_cloud,
+        config_dict=get_ap_config_dict()
 ):
     """Parse predictions to OBB parameters and suppress overlapping boxes
 
@@ -95,7 +87,7 @@ def parse_predictions(
     """
 
     sem_cls_probs = sem_cls_probs.detach().cpu().numpy()  # B,num_proposal,10
-    pred_sem_cls_prob = np.max(sem_cls_probs, -1)  # B,num_proposal
+    # pred_sem_cls_prob = np.max(sem_cls_probs, -1)  # B,num_proposal
     pred_sem_cls = np.argmax(sem_cls_probs, -1)
     obj_prob = objectness_probs.detach().cpu().numpy()
 

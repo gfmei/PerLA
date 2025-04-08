@@ -298,6 +298,7 @@ class ScanNetBaseDataset(Dataset):
         instance_labels = instance_labels[choices]
         semantic_labels = semantic_labels[choices]
         pcl_color = pcl_color[choices]
+        spt_labels = num_to_natural_numpy(spt_labels[choices])
 
         target_bboxes_mask[0: instance_bboxes.shape[0]] = 1
         target_bboxes[0: instance_bboxes.shape[0], :] = instance_bboxes[:, 0:6]
@@ -355,10 +356,6 @@ class ScanNetBaseDataset(Dataset):
 
         ret_dict = {}
         ret_dict["point_clouds"] = point_cloud.astype(np.float32)
-        # pcd_datas = torch.from_numpy(point_cloud.astype(np.float32))
-        # points = pcd_datas[:, :3]
-        # normals = pcd_datas[:, 6:9]
-        # spts = generate_spts(points, normals, k=16, kThresh=0.01, segMinVerts=64).unsqueeze(-1)
         spts = spt_labels[:, None]
         ret_dict["superpoints"] = spts.astype(np.int64)
         ret_dict["gt_box_corners"] = box_corners.astype(np.float32)
@@ -413,3 +410,25 @@ class ScanNetBaseDataset(Dataset):
         ret_dict = self._get_scan_data(scan_name)
         ret_dict["scan_idx"] = np.array(idx).astype(np.int64)
         return ret_dict
+
+
+if __name__ == '__main__':
+    from libs.lib_vis import visualize_clusters, vis_points
+    from libs.lib_spts import num_to_natural_numpy
+
+    data_path = '/data/disk1/data/scannet/scannet_llm'
+    scan_name = 'scene0606_01'
+    mesh_vertices = np.load(os.path.join(data_path, scan_name) + "_aligned_vert.npy")
+    instance_labels = np.load(
+        os.path.join(data_path, scan_name) + "_ins_label.npy"
+    )
+    semantic_labels = np.load(
+        os.path.join(data_path, scan_name) + "_sem_label.npy"
+    )
+    instance_bboxes = np.load(os.path.join(data_path, scan_name) + "_aligned_bbox.npy")
+
+    spt_labels = np.load(os.path.join(data_path, scan_name) + "_spt.npy")
+    spt_labels = num_to_natural_numpy(spt_labels, -1)
+    visualize_clusters(mesh_vertices[:,:3], spt_labels.reshape(-1), scan_name)
+    visualize_clusters(mesh_vertices[:, :3], instance_labels.reshape(-1), 'instance')
+    # vis_points(mesh_vertices[:,:3], scan_name)
