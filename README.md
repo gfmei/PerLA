@@ -3,6 +3,7 @@
 Welcome to the official repository for **PerLA (Perceptive 3D Language Assistant)**, accepted by CVPR2025.
 
 ## News
+- The code is released! Now you can train your customized models!
 - The paper has been accepted by CVPR 2025 🔥.
 - Code stays tuned for updates!
 
