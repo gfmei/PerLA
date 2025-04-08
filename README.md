@@ -28,7 +28,7 @@ We welcome and encourage contributions to the PerLA project! If you'd like to co
 
 
 ## Usage
-Our method borrows a significant amount of code from LL3DA. Thanks for the authors contribution.
+Our method builds upon a substantial amount of code from LL3DA, and we gratefully acknowledge the original authors for their valuable contributions.
 
 <details>
   <summary><b>Data Preparation</b></summary>
@@ -106,7 +106,7 @@ Download files from the `opt-1.3b` checkpoint (or any other decoder-only LLM) at
 <details>
   <summary><b>Training</b></summary>
 
-  To train the model as a 3D generalist: (We have also uploaded the pre-trained weights to [huggingface](https://huggingface.co/CH3COOK/LL3DA-weight-release/blob/main/ll3da-opt-1.3b.pth).)
+  To train the model as a 3D generalist: 
 
   ```{bash}
   bash scripts/opt-1.3b/train.generalist.sh
@@ -165,7 +165,7 @@ Before contributing, please review our [contribution guidelines](https://github.
 ## Citation
 If you find our code or paper useful, please cite
 ```bibtex
-@inproceedings{mei2024geometrically,
+@inproceedings{mei2025PerLA,
   title     = {PerLA: Perceptive 3D language assistant},
   author    = {Guofeng Mei, Wei Lin,  Luigi Riz,  Yujiao Wu,  Fabio Poiesi,  Yiming Wang},
   booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
