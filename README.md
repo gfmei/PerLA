@@ -167,7 +167,7 @@ If you find our code or paper useful, please cite
 ```bibtex
 @inproceedings{mei2025PerLA,
   title     = {PerLA: Perceptive 3D language assistant},
-  author    = {Guofeng Mei, Wei Lin,  Luigi Riz,  Yujiao Wu,  Fabio Poiesi,  Yiming Wang},
+  author    = {Guofeng Mei, Wei Lin, Luigi Riz, Yujiao Wu, Fabio Poiesi, Yiming Wang},
   booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
   year      = {2025}
 ```
