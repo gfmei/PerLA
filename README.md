@@ -24,7 +24,7 @@ We welcome and encourage contributions to the PerLA project! If you'd like to co
 ## TODO
 - [x] Provide code for generate dataset with superpoints
 - [x] Provide code for training
-- [] Provide checkpoints for test
+- [ ] Provide checkpoints for test
 
 
 ## Usage
