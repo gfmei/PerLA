@@ -11,20 +11,17 @@ sys.path.append(cwd)
 
 sys.path.append(os.path.join(cwd, 'datasets'))
 sys.path.append(os.path.join(cwd, 'models'))
-sys.path.append(os.path.join(cwd, 'utils'))
+sys.path.append(os.path.join(cwd, 'libs'))
 
 from datasets.scannet_base_dataset import DatasetConfig
 from models.perla.engine import do_train
 from models.perla.model_general import CaptionNet
-from utils.dist import init_distributed, is_distributed, get_rank
-from utils.io import resume_if_possible
-from utils.misc import my_worker_init_fn
+from libs.dist import init_distributed, is_distributed, get_rank
+from libs.misc import my_worker_init_fn, resume_if_possible
 
 
 def make_args_parser():
-    parser = argparse.ArgumentParser(
-        "LL3DA: Visual Interactive Instruction Tuning for Omni-3D Understanding, Reasoning, and Planning",
-        add_help=False)
+    parser = argparse.ArgumentParser("PerLA", add_help=False)
     ##### Optimizer #####
     parser.add_argument("--base_lr", default=5e-4, type=float)
     parser.add_argument("--final_lr", default=1e-6, type=float)
@@ -53,7 +50,7 @@ def make_args_parser():
     parser.add_argument("--n_clus", default=128, type=int)
     parser.add_argument("--nlatent_query", default=32, type=int)
 
-    parser.add_argument("--detector", default="detector_Vote2Cap_DETR", help="folder of the detector")
+    parser.add_argument("--detector", default="perla", help="folder of the detector")
     parser.add_argument("--captioner", default=None, type=str, help="folder of the captioner")
     # training strategy
     parser.add_argument(
@@ -81,8 +78,8 @@ def make_args_parser():
     ##### Dataset #####
     parser.add_argument("--max_prompts", default=16, type=int, help="number of visual interactions")
     parser.add_argument("--dataset", default='scannet', help="dataset list split by ','")
-    # root_dir = '/storage2/TEV/datasets/ScanNet/ll3da'
-    parser.add_argument("--root_dir", default='/storage2/TEV/datasets/ScanNet/ll3da', help="dataset root")
+    # root_dir = '/storage2/TEV/datasets/ScanNet/perla'
+    parser.add_argument("--root_dir", default='/data/disk1/data/scannet/scannet_llm', help="dataset root")
     parser.add_argument("--grid_size_3d", default=255, type=int, help="grid size of the 3D scene")
     parser.add_argument('--vocab', default="llama-hf/7B", type=str, help="The LLM backend")
     parser.add_argument('--qformer_vocab', default="bert-base-uncased", type=str, help="The QFormer backend")
