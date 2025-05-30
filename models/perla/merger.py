@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 
 from models.common.helpers import GenericMLP
-from models.common.hilbert_util import HilbertCurveBatch
+from models.common.hilbert_util import HilbertCurveBatch, quantise_to_grid, dequantise_from_grid
 from models.common.position_embedding import PosE
 from models.common.transformer import MultiHeadCrossAttention
 from models.common.mincut import (construct_similarity_matrix, MinCutPoolingLayer, cut_loss, normalized_laplacian,
@@ -22,6 +22,15 @@ class TransTensor(nn.Module):
         x = x.transpose(self.dim2, self.dim1)
         x = x.contiguous()
         return x
+
+
+# helpers.py
+def pre_bn_sanitise(x):
+    fixed = torch.isnan(x) | torch.isinf(x)
+    if fixed.any():
+        x = torch.nan_to_num(x, nan=0., posinf=1e4, neginf=-1e4)
+        print("[WARN] fixed NaN/Inf in BatchNorm input")
+    return x.contiguous()
 
 
 def query_ball_point(radius, nsample, xyz, new_xyz):
@@ -142,9 +151,10 @@ class LearnCut(nn.Module):
         self.n_split = n_split
         self.radius = radius
         self.encoder_dim = encoder_dim
-        
-        self.hilbert_curve = HilbertCurveBatch(p=10, n=3)
 
+        self.bits = 10
+        
+        self.hilbert = HilbertCurveBatch(p=self.bits, n=3)
         # Learnable weights for feature and spatial distances
         self.q_weight = nn.Linear(encoder_dim, hidden_dims)
         self.k_weight = nn.Linear(encoder_dim, hidden_dims)
@@ -198,47 +208,77 @@ class LearnCut(nn.Module):
 
         return loss
 
-    def forward(self, sp_fea, sp_xyz, l_fea_list, l_xyz_list, sp_spts, p_spts):
+    def forward(self, sp_fea, sp_xyz, p_fea, p_xyz, sp_segs, p_segs):
         """
         Forward pass for the Learnable SLIC algorithm.
         Args:
             sp_fea: (B, m, c) Superpoint features
             sp_xyz: (B, m, 3) Superpoint coordinates
-            l_fea_list: (B, n, c) Point feature list
-            l_xyz_list: (B, n, 3) Point coordinate list
+            p_fea: (B, n, c) Point feature
+            p_xyz: (B, n, 3) Point coordinate
+            sp_segs: (B, m) Superpoint segment ids
+            p_segs: (B, n) Point segment ids
         Returns:
             sp_xyz_num: Updated superpoint coordinates (B, m, 3)
             sp_fea_new: Updated superpoint features (B, m, c)
         """
-        p_fea = torch.cat(l_fea_list, dim=1)
-        p_xyz = torch.cat(l_xyz_list, dim=1)
-        # p_spts = torch.cat(l_spt_list, dim=1)
+        # ---------- 1. normalise to [0,1] per‑batch ---------- #
+        p_int, span, mins = quantise_to_grid(p_xyz, bits=self.bits)
+        q_int = quantise_to_grid(sp_xyz, bits=self.bits)[0]
         neigh_xyz, topk_orig_idx, same_label_mask = self.hilbert.approx_knn_hilbert_batch(
-            p_xyz, sp_xyz, sp_spts, p_spts, 2*self.n_split, 4*self.n_split)
+            p_int, q_int, p_segs, sp_segs, 2 * self.n_split, 4 * self.n_split)
+        neigh_xyz = dequantise_from_grid(neigh_xyz, mins, span)
         b, n, k, _ = neigh_xyz.size()
         # neigh_indices, k_morton = search_neighbors_morton(sp_xyz, p_xyz, n_neighbors=2*self.n_split)
         pos_emd = self.pos_embed(sp_xyz)
         emb_dim = sp_fea.size(-1)
-        combined_feats = torch.cat([p_fea, sp_fea], dim=-1)
-        combined_feats_4d = combined_feats.unsqueeze(1).expand(-1, n, -1, -1)
+        # -------------------------------------------------------------
+        # 1) feature table that contains ONLY point features
+        # -------------------------------------------------------------
+        feats_4d = p_fea.unsqueeze(1).expand(-1, n, -1, -1)  # (B, n_super, n_pts, c)
+
+        # 1.a) make indices safe
+        n_pts = p_fea.size(1)
+        safe_idx = topk_orig_idx.clamp(max=n_pts - 1)  # out-of-range → 0
+
+        # 1.b) gather point features
         neigh_fea = torch.gather(
-            combined_feats_4d,
+            feats_4d,
             dim=2,
-            index=topk_orig_idx.unsqueeze(-1).expand(b, n, k, emb_dim)
+            index=safe_idx.unsqueeze(-1).expand(b, n, k, emb_dim)
         ).contiguous()
+
+        # -------------------------------------------------------------
+        # 2) build neighbour position encoding as before
+        # -------------------------------------------------------------
         neigh_xyz = neigh_xyz.contiguous()
         neigh_pos = neigh_xyz - sp_xyz.unsqueeze(-2)
-        neigh_pos = self.fourier(neigh_pos.reshape(b, n*k, -1)).reshape(b, n, k, -1).contiguous()
+        neigh_pos = self.fourier(neigh_pos.reshape(b, n * k, -1)).reshape(b, n, k, -1)
         neigh_pos = self.nei_pos_embed(neigh_pos)
-        q_fea = self.q_weight(sp_fea + pos_emd)
-        k_fea = self.k_weight(neigh_fea + neigh_pos)
-        v_fea = self.v_weight(neigh_fea + neigh_pos)
-        
-        attn = torch.einsum('bnd,bnkd->bnk', q_fea, k_fea) / np.sqrt(self.encoder_dim)
-        
-        attn = torch.softmax(attn, dim=-1)
-        attn_fea = torch.einsum('bnk,bnkd->bnd', attn, self.norm1(v_fea))
+
+        # -------------------------------------------------------------
+        # 3) attention – reuse same_label_mask but also zero-out invalids
+        # -------------------------------------------------------------
+        mask = same_label_mask.to(dtype=torch.bool)
+        attn_logits = torch.einsum('bnd,bnkd->bnk',  # (B,n,K)
+                                   self.q_weight(sp_fea + pos_emd),
+                                   self.k_weight(neigh_fea + neigh_pos)
+                                   ) / np.sqrt(self.encoder_dim)
+
+        mask_any = mask.any(dim=-1, keepdim=True)  # (B,n,1)
+        attn_logits = torch.where(
+            mask_any,
+            attn_logits.masked_fill(~mask, -1e9),  # disallow
+            attn_logits  # fallback (no valid neighbour)
+        )
+        attn = torch.softmax(attn_logits, dim=-1)  # (B,n,K)
+        attn_fea = torch.einsum('bnk,bnkd->bnd',
+                                attn,
+                                self.norm1(self.v_weight(neigh_fea + neigh_pos)))
         # Concatenate the old and new features for projection
+        if torch.isnan(attn_fea).any().item():  # .item() forces sync & avoids device assert
+            print("[WARN] NaNs in attn_fea")
+
         sp_fea_new = self.projection(self.norm2(attn_fea + sp_fea))
         # Apply MinCut pooling
         l_cut_loss = self.min_cut(sp_xyz, sp_fea, sp_fea_new)

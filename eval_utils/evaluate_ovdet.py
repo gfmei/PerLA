@@ -3,15 +3,15 @@ import torch
 import numpy as np
 from collections import defaultdict, OrderedDict
 
-import utils.capeval.bleu.bleu as capblue
-import utils.capeval.cider.cider as capcider
-import utils.capeval.rouge.rouge as caprouge
-import utils.capeval.meteor.meteor as capmeteor
+import libs.capeval.bleu.bleu as capblue
+import libs.capeval.cider.cider as capcider
+import libs.capeval.rouge.rouge as caprouge
+import libs.capeval.meteor.meteor as capmeteor
 
-from utils.box_util import box3d_iou_batch_tensor
-from utils.misc import SmoothedValue
-from utils.proposal_parser import parse_predictions
-from utils.dist import (
+from libs.box_util import box3d_iou_batch_tensor
+from libs.misc import SmoothedValue
+from libs.proposal_parser import parse_predictions
+from libs.dist import (
     is_primary, 
     barrier,
     all_gather_dict
@@ -135,6 +135,7 @@ def evaluate(
             'instruction_mask': batch_data_label['instruction_mask'],
             'qformer_input_ids': batch_data_label['qformer_input_ids'],
             'qformer_attention_mask': batch_data_label['qformer_attention_mask'],
+            "spts": batch_data_label['superpoints'],
         }
         outputs = model(model_input, is_eval=True, task_name='ov-det')
         

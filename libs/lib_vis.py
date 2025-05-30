@@ -1,10 +1,15 @@
+import os
+
+import matplotlib.pyplot as plt
+import numpy as np
+import open3d as o3d
+import colorsys
+
 import torch
 from sklearn.decomposition import PCA
-import numpy as np
-import matplotlib.pyplot as plt
-import open3d as o3d
-from libs.scannet200_constants import SCANNET_COLOR_MAP_200
+
 from libs.box_util import flip_axis_to_camera_np
+from libs.scannet200_constants import SCANNET_COLOR_MAP_200
 
 
 def get_colored_image_pca_sep(feature, name):
@@ -48,7 +53,7 @@ def get_colored_point_cloud_from_soft_labels(xyz, soft_labels, name):
     o3d.io.write_point_cloud(name + f'.ply', pcd)
 
 
-def creat_labeled_point_cloud(points, labels, name, normals=None):
+def create_labeled_point_cloud(points, labels, name, normals=None):
     """
     Creates a point cloud where each point is colored based on its label, and saves it to a .ply file.
 
@@ -91,7 +96,7 @@ def get_colored_point_cloud_pca_sep(xyz, feature, name=None):
 def visualize_clusters(point_cloud, labels, name=None):
     # Generate a color map where each cluster has a unique color
     colors = np.array([SCANNET_COLOR_MAP_200.get(
-        label % len(SCANNET_COLOR_MAP_200), (255.0, 255.0, 255.0)) for label in labels]) / 255.0
+        (label + 1) % len(SCANNET_COLOR_MAP_200), (255.0, 255.0, 255.0)) for label in labels]) / 255.0
 
     # Create an Open3D point cloud object
     pcd = o3d.geometry.PointCloud()
@@ -101,7 +106,6 @@ def visualize_clusters(point_cloud, labels, name=None):
     # Visualize the point cloud
     o3d.visualization.draw_geometries([pcd])
     o3d.io.write_point_cloud(name + '.ply', pcd)
-
 
 
 def vis_points(points, name):
@@ -118,63 +122,90 @@ def vis_points(points, name):
     o3d.io.write_point_cloud(name + '.ply', pcd)
 
 
+def assign_unique_color(original_rgb, hue_shift, blend_ratio=0.4):
+    """
+    Blend the original RGB with a distinct hue.
+    Args:
+        original_rgb: (N, 3) array with values in [0, 1]
+        hue_shift: float in [0, 1]
+        blend_ratio: how much to blend the new hue vs original (0 = full original, 1 = full new hue)
+    Returns:
+        blended_rgb: (N, 3)
+    """
+    hsv = np.array([colorsys.rgb_to_hsv(*rgb) for rgb in original_rgb])
+    hsv[:, 0] = hue_shift  # apply new hue
+    new_rgb = np.array([colorsys.hsv_to_rgb(*h) for h in hsv])
+    return (1 - blend_ratio) * original_rgb + blend_ratio * new_rgb
+
+
 def visualize_multiple_point_clouds(points, feats, name='output'):
     """
-    Visualize and save multiple point clouds, each containing xyz coordinates,
-    RGB values, and normals.
+    Visualize and save multiple point clouds:
+    - Each individual cloud is assigned a distinct solid color.
+    - The combined cloud uses the original colors from the point clouds.
 
     Args:
-        points (list): A list of tensors where each tensor contains the xyz coordinates of a point cloud.
-                       Shape for each element: [N, 3].
-        feats (list): A list of tensors where each tensor contains RGB and normals for a point cloud.
-                      Shape for each element: [N, 6].
-        name (str): Base name for saving the point clouds. Defaults to 'output'.
+        points (list): A list of tensors of shape (B, N, 3) or (N, 3).
+        feats (list): A list of tensors of shape (B, N, 6) or (N, 6), where the first 3 channels are RGB.
 
     Returns:
         None
     """
-    o3d_pcds = []
+    o3d_pcds_colored = []
+    o3d_pcds_original = []
 
-    for i, (point_tensor, feat_tensor) in enumerate(zip(points, feats)):
-        # Convert tensors to numpy arrays
-        xyz = point_tensor.squeeze(0).cpu().numpy()
-        feat = feat_tensor.squeeze(0).cpu().numpy()
-        print(xyz.shape, feat.shape)
+    # Predefined solid colors for visualization of individual point clouds
+    solid_colors = [
+        [1, 0, 0],  # red
+        [0, 1, 0],  # green
+        [0, 0, 1],  # blue
+        [1, 1, 0],  # yellow
+        [0, 1, 1],  # cyan
+        [1, 0, 1],  # magenta
+    ]
 
-        # Create an Open3D PointCloud object
-        pcd = o3d.geometry.PointCloud()
+    for i, (pt_tensor, ft_tensor) in enumerate(zip(points, feats)):
+        xyz = pt_tensor.squeeze(0).cpu().numpy()
+        feat = ft_tensor.squeeze(0).cpu().numpy()
 
-        # Assign points
-        pcd.points = o3d.utility.Vector3dVector(xyz)
+        # Original color version (used for combined export)
+        pcd_original = o3d.geometry.PointCloud()
+        pcd_original.points = o3d.utility.Vector3dVector(xyz)
+        pcd_original.colors = o3d.utility.Vector3dVector(feat[:, :3] / 255.0)
+        pcd_original.normals = o3d.utility.Vector3dVector(feat[:, 3:6])
+        o3d_pcds_original.append(pcd_original)
 
-        # Assign colors (normalize RGB values to [0, 1])
-        colors = feat[:, :3] / 255.0
-        pcd.colors = o3d.utility.Vector3dVector(colors)
+        # Uniform solid color for visualization
+        pcd_color = o3d.geometry.PointCloud()
+        pcd_color.points = o3d.utility.Vector3dVector(xyz)
+        color = np.tile(solid_colors[i % len(solid_colors)], (xyz.shape[0], 1))
+        pcd_color.colors = o3d.utility.Vector3dVector(color)
+        o3d_pcds_colored.append(pcd_color)
 
-        # Assign normals
-        normals = feat[:, 3:6]
-        pcd.normals = o3d.utility.Vector3dVector(normals)
-
-        # Save individual point cloud
+        # Save original color version
         filename = f"{name}_split_{i}.ply"
-        o3d.io.write_point_cloud(filename, pcd)
+        o3d.io.write_point_cloud(filename, pcd_original)
         print(f"Saved: {filename}")
 
-        # Append to list for visualization
-        o3d_pcds.append(pcd)
+    # Save colored version for visualization (merged)
+    colored_combined = o3d.geometry.PointCloud()
+    for pcd in o3d_pcds_colored:
+        colored_combined += pcd
+    o3d.io.write_point_cloud(f"{name}_colored.ply", colored_combined)
+    print(f"Saved colored visualization: {name}_colored.ply")
 
-    # Visualize all point clouds together
-    print("Visualizing all point clouds together...")
-    o3d.visualization.draw_geometries(o3d_pcds)
+    print("Visualizing individual point clouds with solid colors...")
+    o3d.visualization.draw_geometries(o3d_pcds_colored)
 
-    # Save combined point cloud (if desired)
-    combined_filename = f"{name}_combined.ply"
+    # Save combined point cloud using original colors
     combined_pcd = o3d.geometry.PointCloud()
-    for pcd in o3d_pcds:
+    for pcd in o3d_pcds_original:
         combined_pcd += pcd
-    o3d.io.write_point_cloud(combined_filename, combined_pcd)
-    print(f"Saved combined point cloud: {combined_filename}")
+    o3d.io.write_point_cloud(f"{name}_combined.ply", combined_pcd)
+    print(f"Saved combined point cloud: {name}_combined.ply")
 
+    print("Visualizing combined point cloud with original colors...")
+    o3d.visualization.draw_geometries([combined_pcd])
 
 
 # def visualize_detection(ret_dict):
@@ -232,6 +263,44 @@ def visualize_multiple_point_clouds(points, feats, name='output'):
 #     # Run the visualizer
 #     vis.run()
 #     vis.destroy_window()
+
+def visualize_grouped_points(point_groups, filename='grouped'):
+    """
+    Visualize and save a point cloud where each group (N x K x 3) is colored with a fixed solid color.
+
+    Args:
+        point_groups (torch.Tensor or np.ndarray): shape (N, K, 3)
+        filename (str): Path to save the PLY file.
+    """
+    if isinstance(point_groups, torch.Tensor):
+        point_groups = point_groups.cpu().numpy()
+
+    N, K, _ = point_groups.shape
+
+    # Flatten the point cloud (N*K, 3)
+    points_flat = point_groups.reshape(-1, 3)
+
+    # Get N distinct colors using matplotlib colormap
+    cmap = plt.get_cmap('tab20' if N <= 20 else 'gist_ncar')
+    fixed_colors = cmap(np.linspace(0, 1, N))[:, :3]
+
+    # Assign each group a color
+    colors_flat = np.repeat(fixed_colors, K, axis=0)
+
+    # Create point cloud
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points_flat)
+    pcd.colors = o3d.utility.Vector3dVector(colors_flat)
+
+    # Save PLY file
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    o3d.io.write_point_cloud(filename + '.ply', pcd)
+    print(f"Saved colored grouped point cloud to {filename}")
+
+    # Visualize
+    o3d.visualization.draw_geometries([pcd])
+
+
 def random_translate_boxes_numpy(boxes, translation_range=(-0.5, 0.5)):
     """
     Apply a random translation to a batch of 3D boxes using NumPy.
@@ -244,12 +313,14 @@ def random_translate_boxes_numpy(boxes, translation_range=(-0.5, 0.5)):
         ndarray: Translated boxes with the same shape as the input.
     """
     # Generate random translations for each box in the range [translation_range[0], translation_range[1]]
-    translations = np.random.uniform(translation_range[0], translation_range[1], size=(boxes.shape[0], 1, 3))  # Shape: [N, 1, 3]
+    translations = np.random.uniform(translation_range[0], translation_range[1],
+                                     size=(boxes.shape[0], 1, 3))  # Shape: [N, 1, 3]
 
     # Apply the translations to the boxes
     translated_boxes = boxes + translations  # Broadcasting adds translation to all 8 vertices
 
     return translated_boxes
+
 
 def visualize_detection(ret_dict, objectness_threshold=0.001, iou_threshold=0.0):
     """
@@ -296,7 +367,7 @@ def visualize_detection(ret_dict, objectness_threshold=0.001, iou_threshold=0.0)
             lines = [
                 [0, 1], [1, 2], [2, 3], [3, 0],  # Bottom face
                 [4, 5], [5, 6], [6, 7], [7, 4],  # Top face
-                [0, 4], [1, 5], [2, 6], [3, 7]   # Side edges
+                [0, 4], [1, 5], [2, 6], [3, 7]  # Side edges
             ]
             line_set = o3d.geometry.LineSet()
             line_set.points = o3d.utility.Vector3dVector(corners)

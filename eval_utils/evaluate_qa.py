@@ -1,25 +1,19 @@
-import os, sys, time, math, json, importlib
+import os, time, json
 import torch
 import datetime
-from collections import defaultdict, OrderedDict
+from collections import OrderedDict
 
-import utils.capeval.bleu.bleu as capblue
-import utils.capeval.cider.cider as capcider
-import utils.capeval.rouge.rouge as caprouge
-import utils.capeval.meteor.meteor as capmeteor
+import libs.capeval.bleu.bleu as capblue
+import libs.capeval.cider.cider as capcider
+import libs.capeval.rouge.rouge as caprouge
+import libs.capeval.meteor.meteor as capmeteor
 
-from utils.box_util import box3d_iou_batch_tensor
-from utils.ap_calculator import APCalculator
-from utils.io import save_checkpoint
-from utils.misc import SmoothedValue
-from utils.proposal_parser import parse_predictions
-from utils.dist import (
-    init_distributed, 
-    is_distributed, 
-    is_primary, 
-    get_rank,
+# from libs.box_util import box3d_iou_batch_tensor
+from libs.misc import SmoothedValue
+# from libs.proposal_parser import parse_predictions
+from libs.dist import (
+    is_primary,
     barrier,
-    all_reduce_average,
     all_gather_dict
 )
 
@@ -119,6 +113,7 @@ def evaluate(
             'qformer_attention_mask': batch_data_label['qformer_attention_mask'],
             'instruction': batch_data_label['instruction'],
             'instruction_mask': batch_data_label['instruction_mask'],
+            "spts": batch_data_label['superpoints'],
         }
         outputs = model(model_input, is_eval=True, task_name='qa')
         

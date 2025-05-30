@@ -13,6 +13,34 @@ import trimesh
 from torch import nn
 
 
+def transform_point_cloud(point_cloud, box_center, box_angle):
+    """
+    Transforms the point cloud to align with the already-transformed bounding boxes.
+
+    Args:
+        point_cloud (np.ndarray): Point cloud data to transform.
+        box_center (np.ndarray): Center of the bounding box.
+        box_angle (np.ndarray): Rotation angle (in radians) of the bounding box.
+
+    Returns:
+        np.ndarray: Transformed point cloud.
+    """
+    # Translate the point cloud to align with the bounding box center
+    point_cloud -= box_center  # Translate to box center
+
+    # Apply rotation based on the box angle around the Z-axis
+    cos_angle, sin_angle = np.cos(box_angle), np.sin(box_angle)
+    rotation_matrix = np.array([
+        [cos_angle, -sin_angle, 0],
+        [sin_angle, cos_angle, 0],
+        [0, 0, 1]
+    ])
+    transformed_point_cloud = point_cloud @ rotation_matrix.T  # Rotate around the Z-axis
+
+    return transformed_point_cloud
+
+
+
 # ----------------------------------------
 # Point Cloud Sampling
 # ----------------------------------------

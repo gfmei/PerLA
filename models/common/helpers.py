@@ -1,7 +1,20 @@
 import copy
 from functools import partial
 
+import torch
 import torch.nn as nn
+
+
+# ---------------------------------------------------------------------
+def _sanitize_bn_input(x: torch.Tensor) -> torch.Tensor:
+    """
+    Make a tensor safe for cuDNN BatchNorm:
+      • replace NaN / ±Inf with finite numbers
+      • return a contiguous view
+    """
+    if torch.isnan(x).any() or torch.isinf(x).any():
+        x = torch.nan_to_num(x, nan=0.0, posinf=1e4, neginf=-1e4)
+    return x.contiguous()
 
 
 class BatchNormDim1Swap(nn.BatchNorm1d):
@@ -108,7 +121,11 @@ class GenericMLP(nn.Module):
                 func(param)
 
     def forward(self, x):
-        output = self.layers(x)
+        # ---- cuDNN-safe BatchNorm call --------------------------------------
+        x = _sanitize_bn_input(x)  # clamp NaN/Inf + make contiguous
+        with torch.backends.cudnn.flags(enabled=False):  # avoid buggy BN path
+            output = self.layers(x)  # cuDNN off; native PyTorch BN
+
         return output
 
 

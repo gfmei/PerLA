@@ -13,7 +13,7 @@ sys.path.append(os.path.join(cwd, 'datasets'))
 sys.path.append(os.path.join(cwd, 'models'))
 sys.path.append(os.path.join(cwd, 'libs'))
 
-from datasets.scannet_base_dataset import DatasetConfig
+from datasets.data_config import DatasetConfig
 from models.perla.engine import do_train
 from models.perla.model_general import CaptionNet
 from libs.dist import init_distributed, is_distributed, get_rank

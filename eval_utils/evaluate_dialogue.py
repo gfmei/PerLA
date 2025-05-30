@@ -3,17 +3,17 @@ import torch
 import datetime
 from collections import defaultdict, OrderedDict
 
-import utils.capeval.bleu.bleu as capblue
-import utils.capeval.cider.cider as capcider
-import utils.capeval.rouge.rouge as caprouge
-import utils.capeval.meteor.meteor as capmeteor
+import libs.capeval.bleu.bleu as capblue
+import libs.capeval.cider.cider as capcider
+import libs.capeval.rouge.rouge as caprouge
+import libs.capeval.meteor.meteor as capmeteor
 
-from utils.box_util import box3d_iou_batch_tensor
-from utils.ap_calculator import APCalculator
-from utils.io import save_checkpoint
-from utils.misc import SmoothedValue
-from utils.proposal_parser import parse_predictions
-from utils.dist import (
+from libs.box_util import box3d_iou_batch_tensor
+from libs.ap_calculator import APCalculator
+# from libs.io import save_checkpoint
+from libs.misc import SmoothedValue
+from libs.proposal_parser import parse_predictions
+from libs.dist import (
     init_distributed, 
     is_distributed, 
     is_primary, 
@@ -120,6 +120,7 @@ def evaluate(
             'qformer_attention_mask': batch_data_label['qformer_attention_mask'],
             'instruction': batch_data_label['instruction'],
             'instruction_mask': batch_data_label['instruction_mask'],
+            "spts": batch_data_label['superpoints'],
         }
         outputs = model(model_input, is_eval=True, task_name='chat')
         

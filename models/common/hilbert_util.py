@@ -23,6 +23,24 @@ from typing import Iterable, List, Union
 import torch
 
 
+def quantise_to_grid(xyz: torch.Tensor, bits: int = 10):
+    """
+    Map float xyz (…) to integer coords in [0, 2**bits – 1] per-batch.
+    """
+    xyz = xyz.float()
+    mins = xyz.amin(dim=-2, keepdim=True)
+    span = (xyz.amax(dim=-2, keepdim=True) - mins).clamp_min_(1e-9)
+    max_val = (1 << bits) - 1                       # 2**bits – 1
+    return ((xyz - mins) / span * max_val).round().long(), span, mins
+
+def dequantise_from_grid(quantized: torch.Tensor, mins: torch.Tensor, span: torch.Tensor, bits: int = 10) -> torch.Tensor:
+    """
+    Recover original xyz values from quantized coords using stored mins and span.
+    """
+    max_val = (1 << bits) - 1
+    return quantized.float() / max_val * span + mins
+
+
 def _binary_repr(num: int, width: int) -> str:
     """Return a binary string representation of `num` zero-padded to `width` bits."""
     return format(num, 'b').zfill(width)
@@ -407,84 +425,101 @@ class HilbertCurveBatch:
         return combined_dist
 
     def distances_from_points_label_center_batch_torch(
-            self,  # "self" = your HilbertCurveBatch instance
+            self,
             points_3d: torch.Tensor,  # (B, N, d)
             labels_2d: torch.Tensor,  # (B, N)
-            label_offset: int = None
+            label_offset: int | None = None,
     ):
         """
-        Fully vectorized 'label-center-based' sorting per batch, with no Python for loops.
-
-        Steps:
-          1) Compute label centers (scatter_add) => shape (B, max_label+1, d).
-          2) Compute Hilbert distance of each label's center => shape (B, max_label+1).
-          3) Mark missing labels (count=0) with a large distance => so they sort last.
-          4) Sort each batch's labels in ascending order of center-dist => get sorted_label_idx.
-             Then invert that to get block_id for each label => block_id[b,lbl].
-          5) For each point, compute:
-                combined_dist = hilbert_dist(point) + block_id[ label(point) ] * offset
-             Then per-batch sort points by combined_dist, gather the final ordering.
-
-        Returns:
-          sorted_points_3d: (B, N, d)
-          sorted_labels_2d: (B, N)  (original labels in new order)
-          sorted_dists_2d: (B, N)  (Hilbert distances in new order)
-          label_block_ids_2d: (B, N)  the block ID assigned to each point's label
+        Vectorised label-aware ordering WITHOUT an explicit block-ID.
+        Returns the 1-D combined key; you can sort/gather right after.
         """
 
-        if points_3d.dim() != 3:
-            raise ValueError("points_3d must be (B, N, d).")
-        if labels_2d.dim() != 2:
-            raise ValueError("labels_2d must be (B, N).")
+        # ----------- basic checks ------------------------------------------------
+        if points_3d.dim() != 3 or labels_2d.dim() != 2:
+            raise ValueError("points_3d (B,N,d) and labels_2d (B,N) required.")
         if points_3d.shape[:2] != labels_2d.shape:
-            raise ValueError("Mismatch in batch, N between points_3d and labels_2d.")
-
+            raise ValueError("Mismatch in (B,N) between points_3d and labels_2d.")
         B, N, d = points_3d.shape
         if d != self.n:
-            raise ValueError(f"points_3d.shape[2] = {d}, but Hilbert dimension self.n = {self.n}.")
+            raise ValueError(f"points_3d dim {d} ≠ Hilbert dim {self.n}.")
 
-        # 1) Compute label centers fully vectorized
-        max_label_val = labels_2d.max().item()  # global maximum label across all batches
-        centers_3d, count_2d = compute_label_centers_and_counts(
-            points_3d, labels_2d, max_label_val
-        )  # centers_3d: (B, max_label+1, d), count_2d: (B, max_label+1)
+        # ----------- 1) centres & counts ----------------------------------------
+        L = labels_2d.max().item() + 1
+        centres_3d, counts = compute_label_centers_and_counts(
+            points_3d, labels_2d, L - 1)  # (B,L,d), (B,L)
 
-        # 2) Hilbert distance of each center => shape (B, max_label+1)
-        #    We'll treat each center_3d[b,label] as a point in [0..2^p-1]^d if it is valid
-        centers_dist_2d = self.distances_from_points_batch(centers_3d)  # (B, max_label+1)
+        # ----------- 2) Hilbert distances ---------------------------------------
+        pt_dist = self.distances_from_points_batch(points_3d)  # (B,N)
+        ctr_dist = self.distances_from_points_batch(centres_3d)  # (B,L)
+        ctr_dist = ctr_dist.float()
+        ctr_dist[counts == 0] = 1e9  # push missing labels last
 
-        # 3) Mark missing labels (count=0) with a large distance => sorts them last
-        missing_mask = (count_2d == 0)  # shape (B, max_label+1)
-        centers_dist_2d = centers_dist_2d.float()  # ensure float for fill
-        centers_dist_2d[missing_mask] = 1e9
+        # ----------- 3) look up each point’s coarse key --------------------------
+        ctr_of_pt = torch.gather(ctr_dist, 1, labels_2d)  # (B,N)
 
-        # 4) Sort each batch's labels by center-dist => get sorted_label_idx
-        #    sorted_center_idx[b] is the permutation of [0..max_label]
-        sorted_center_dist, sorted_center_idx = torch.sort(centers_dist_2d, dim=1)
-
-        #    We want "block_id[b, label] = rank" => the position of each label in the sorted order
-        #    We'll invert the sort with a scatter
-        # B_arange = torch.arange(B, device=points_3d.device).view(B, 1)
-        L = max_label_val + 1
-        block_id = torch.zeros((B, L), dtype=torch.long, device=points_3d.device)
-        i_idx = torch.arange(L, device=points_3d.device).view(1, -1).expand(B, -1)  # shape (B, L)
-        # block_id[b, sorted_center_idx[b,i]] = i
-        block_id.scatter_(dim=1, index=sorted_center_idx, src=i_idx)
-        # Now block_id[b, lbl] = the rank of label lbl in ascending center-dist for batch b
-        #    => "label-block ID".
-
-        # 5a) For each point => label_block_ids_2d[b, i] = block_id[b, labels_2d[b,i]]
-        label_block_ids_2d = torch.gather(block_id, dim=1, index=labels_2d)
-        # 5b) Compute actual Hilbert distance for each point
-        points_dist_2d = self.distances_from_points_batch(points_3d)  # (B, N)
-
-        # 5c) If label_offset not given, choose a big offset => strictly separate label blocks
+        # ----------- 4) fuse two keys -------------------------------------------
         if label_offset is None:
-            label_offset = (2 ** (self.p * self.n)) + 1
-        # combined_dist[b,i] = points_dist_2d[b,i] + label_block_ids_2d[b,i]*label_offset
-        combined_dist_2d = points_dist_2d + (label_block_ids_2d * label_offset)
+            # guarantee > max(pt_dist) for every batch
+            label_offset = pt_dist.max(dim=1, keepdim=True).values + 1
 
-        return combined_dist_2d
+        combined = ctr_of_pt * label_offset + pt_dist  # (B,N)
+        return combined
+
+    # def distances_from_points_label_center_batch_torch(
+    #         self,
+    #         points_3d: torch.Tensor,  # (B, N, d)
+    #         labels_2d: torch.Tensor,  # (B, N)
+    #         label_offset: int = None,
+    # ):
+    #     if points_3d.dim() != 3 or labels_2d.dim() != 2:
+    #         raise ValueError("points_3d (B,N,d) and labels_2d (B,N) required.")
+    #     if points_3d.shape[:2] != labels_2d.shape:
+    #         raise ValueError("points_3d and labels_2d mismatch in (B,N).")
+    #     B, N, d = points_3d.shape
+    #     if d != self.n:
+    #         raise ValueError(f"points_3d has dim {d}, Hilbert n = {self.n}.")
+    #
+    #     # ------------------------------------------------------------------
+    #     # 1) label centres (vectorised)
+    #     # ------------------------------------------------------------------
+    #     L = labels_2d.max().item() + 1  # total label count
+    #     centres_3d, counts = compute_label_centers_and_counts(
+    #         points_3d, labels_2d, L - 1)  # (B,L,d), (B,L)
+    #
+    #     # ------------------------------------------------------------------
+    #     # 2) ONE Hilbert pass for all points  -------------------------------
+    #     #    cat [points | centres]  ->  (B, N+L, d)
+    #     # ------------------------------------------------------------------
+    #     all_pts = torch.cat([points_3d, centres_3d], dim=1)  # (B, N+L, d)
+    #     all_dists = self.distances_from_points_batch(all_pts)  # (B, N+L)
+    #
+    #     # split back
+    #     pts_dist = all_dists[:, :N]  # (B, N)
+    #     ctr_dist = all_dists[:, N:]  # (B, L)
+    #
+    #     # mark missing labels (count==0) ⇒ push to the end
+    #     ctr_dist = ctr_dist.float()
+    #     ctr_dist[counts == 0] = 1e9
+    #
+    #     # ------------------------------------------------------------------
+    #     # 3) sort labels by centre distance → rank/block ID
+    #     # ------------------------------------------------------------------
+    #     _, sort_idx = torch.sort(ctr_dist, dim=1)  # (B, L)
+    #     rank = torch.zeros_like(sort_idx)
+    #     rank.scatter_(1, sort_idx, torch.arange(L, device=points_3d.device).expand(B, L))
+    #
+    #     # map each point’s label to its block ID
+    #     block_id = torch.gather(rank, 1, labels_2d)  # (B, N)
+    #
+    #     # ------------------------------------------------------------------
+    #     # 4) combine   (offset keeps label blocks disjoint)
+    #     # ------------------------------------------------------------------
+    #     if label_offset is None:
+    #         label_offset = (2 ** (self.p * self.n)) + 1  # > max Hilbert dist
+    #     comb = pts_dist + block_id * label_offset  # (B, N)
+    #
+    #     return comb  # or keep sorting/gather logic as before
 
         # # Finally, sort points per-batch by combined_dist
         # sorted_vals, sorted_indices = torch.sort(combined_dist_2d, dim=1)  # (B, N)
@@ -501,7 +536,7 @@ class HilbertCurveBatch:
     # -----------------------------------------------------------------------
     # Approximate kNN with NO for-loop over queries
     # -----------------------------------------------------------------------
-    def approx_knn_hilbert_batch(self, p_pcds, q_pcds, p_l, q_l, K=8, search_window=32):
+    def approx_knn_hilbert_batch(self, p_pcds, q_pcds, p_l, q_l, K=8, search_window=32, label_offset=1):
         """
         A purely 'combined_dist' based approximate kNN for Q from P,
         using label-center-based combined distances.
@@ -527,7 +562,7 @@ class HilbertCurveBatch:
 
         # 2) compute the single combined_dist for each point
         combined_dist_2d = self.distances_from_points_label_center_batch_torch(
-            combined_points, combined_labels
+            combined_points, combined_labels, label_offset=label_offset
         )  # shape (B, N_p+N_q)
 
         # 2.1) sort => (B, 2N)

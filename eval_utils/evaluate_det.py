@@ -1,8 +1,8 @@
 import time
 import torch
-from utils.ap_calculator import APCalculator
-from utils.misc import SmoothedValue
-from utils.dist import (
+from libs.ap_calculator import APCalculator
+from libs.misc import SmoothedValue
+from libs.dist import (
     is_primary, 
     barrier,
     all_gather_dict
@@ -48,6 +48,7 @@ def evaluate(
             'point_clouds': batch_data_label['point_clouds'],
             'point_cloud_dims_min': batch_data_label['point_cloud_dims_min'],
             'point_cloud_dims_max': batch_data_label['point_cloud_dims_max'],
+            "spts": batch_data_label['superpoints'],
         }
         outputs = model(model_input, is_eval=True)
         

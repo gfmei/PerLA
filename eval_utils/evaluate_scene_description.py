@@ -5,16 +5,16 @@ from collections import OrderedDict
 
 import torch
 
-import utils.capeval.bleu.bleu as capblue
-import utils.capeval.cider.cider as capcider
-import utils.capeval.meteor.meteor as capmeteor
-import utils.capeval.rouge.rouge as caprouge
-from utils.dist import (
+import libs.capeval.bleu.bleu as capblue
+import libs.capeval.cider.cider as capcider
+import libs.capeval.meteor.meteor as capmeteor
+import libs.capeval.rouge.rouge as caprouge
+from libs.dist import (
     is_primary,
     barrier,
     all_gather_dict
 )
-from utils.misc import SmoothedValue
+from libs.misc import SmoothedValue
 
 
 def score_captions(corpus: dict, candidates: dict):
@@ -114,6 +114,7 @@ def evaluate(
             'qformer_attention_mask': batch_data_label['qformer_attention_mask'],
             'instruction': batch_data_label['instruction'],
             'instruction_mask': batch_data_label['instruction_mask'],
+            "spts": batch_data_label['superpoints'],
         }
         outputs = model(model_input, is_eval=True, task_name='chat')
 

@@ -6,11 +6,13 @@ from math import ceil
 
 import torch
 from addict import Dict
-# from hilbertcurve.hilbertcurve import HilbertCurve
 
 from models.common.hilbert import encode as hilbert_encode_
 from models.common.hilbert_util import HilbertCurveBatch
 from models.common.z_order import xyz2key as z_order_encode_
+
+
+# from hilbertcurve.hilbertcurve import HilbertCurve
 
 
 class Point(Dict):
@@ -207,11 +209,11 @@ def serialization_from_batch(batch_points, batch_feats, grid_size=0.01):
         Point: A Point object containing the point cloud information.
     """
     B, N, _ = batch_points.shape  # B: batch size, N: number of points, 3: (x, y, z)
-    _, _, D = batch_feats.shape   # D: feature dimension
+    _, _, D = batch_feats.shape  # D: feature dimension
     device = batch_points.device
     # Step 1: Flatten the point cloud and features
     flattened_points = batch_points.reshape(-1, 3)  # Shape [B * N, 3]
-    flattened_feats = batch_feats.reshape(-1, D)    # Shape [B * N, D]
+    flattened_feats = batch_feats.reshape(-1, D)  # Shape [B * N, D]
 
     # Step 2: Create the batch indices (which batch each point belongs to)
     # batch_indices = torch.repeat_interleave(torch.arange(B), N).to(device)  # Shape [B * N]
@@ -227,11 +229,11 @@ def serialization_from_batch(batch_points, batch_feats, grid_size=0.01):
 
     # Step 5: Create the Point object
     point_data = {
-        "coord": flattened_points,    # Original coordinates
+        "coord": flattened_points,  # Original coordinates
         # "grid_coord": grid_coord,     # Grid coordinates
-        "feat": flattened_feats,      # Features
+        "feat": flattened_feats,  # Features
         # "batch": batch_indices,       # Batch indices
-        "offset": offsets,            # Batch offsets
+        "offset": offsets,  # Batch offsets
         "grid_size": torch.tensor(grid_size)  # Grid size
     }
 
@@ -309,63 +311,6 @@ def divide_point_cloud_with_padding(points, feats=None, k=6):
         return split_points, split_feats
 
     return split_points
-
-
-def compute_hilbert_indices(points, precision=10, rank_axis="x", labels=None):
-    """
-    Compute Hilbert indices for a batch of 3D points.
-
-    Args:
-        points (torch.Tensor): shape [B, N, 3] or possibly [N, 3].
-        precision (int): bits per coordinate
-        rank_axis (str): 'x','y','z' or None
-    Returns:
-        torch.Tensor: shape [B, N] of Hilbert distances
-        :param labels:
-    """
-    # If the user only provides [N, 3], make it [1, N, 3]
-    if points.dim() == 2:
-        points = points.unsqueeze(0)
-
-    B, N, D = points.shape
-    device = points.device
-    if D != 3:
-        raise ValueError(f"Expected last dimension == 3, got {D}")
-
-    # 1) Normalize
-    p_min = points.amin(dim=1, keepdim=True)
-    p_max = points.amax(dim=1, keepdim=True)
-    normalized_pc = (points - p_min) / (p_max - p_min + 1e-8)
-
-    # 2) Quantize
-    max_value = 2**precision - 1
-    int_coords = (normalized_pc * max_value).long().clamp(0, max_value)  # [B, N, 3]
-
-    # 3) Reorder axes
-    x = int_coords[..., 0]
-    y = int_coords[..., 1]
-    z = int_coords[..., 2]
-
-    if rank_axis == "x":
-        priority_coords = torch.stack([x, y, z], dim=-1)  # (B, N, 3)
-    elif rank_axis == "y":
-        priority_coords = torch.stack([y, x, z], dim=-1)
-    elif rank_axis == "z":
-        priority_coords = torch.stack([z, x, y], dim=-1)
-    else:
-        priority_coords = torch.stack([x, y, z], dim=-1)
-
-    # Create a Hilbert curve for 3D
-    hilbert_curve = HilbertCurveBatch(p=precision, n=3)
-
-    # 5) Compute Hilbert indices [B, N]
-    if labels is not None:
-        hilbert_indices = hilbert_curve.distances_from_points_label_center_batch_torch(priority_coords, labels)
-    else:
-        hilbert_indices = hilbert_curve.distances_from_points_batch(priority_coords)
-    return hilbert_indices
-
-
 
 
 def divide_point_cloud_axis(points, feats=None, k=6):
@@ -450,91 +395,115 @@ def divide_point_cloud_axis(points, feats=None, k=6):
     return split_points, split_feats if feats is not None else split_points
 
 
+# -----------------------------------------------------------------------------
+#  Util: robust Hilbert‐index computation for batched 3‑D point clouds
+# -----------------------------------------------------------------------------
 
-def divide_point_cloud_curve(points, feats=None, labels=None, k=6, grid_size=0.01, order="hilbert"):
+def compute_hilbert_indices(
+    points: torch.Tensor,
+    bits: int = 10,                         # #bits per coordinate (2**bits bins)
+    axis_priority: str = "xyz",           # permutation of "xyz", e.g. "zxy"
+    labels = None   # optional label tensor
+) -> torch.Tensor:
+    """Return Hilbert indices ∈[0,2**(3·bits)‑1] for each point.
+
+    • Points are first *unit‑cube normalised per batch* then quantised to
+      integers [0,2**bits‑1].
+    • ``axis_priority`` re‑orders (x,y,z) before indexing so you can bias the
+      curve to sweep fastest along a chosen axis.
+    • If *labels* are given, we keep points of the same label **close** by
+      offsetting each label block; this helps when used for super‑points.
     """
-    Divide a point cloud into K parts using Hilbert curve-based sorting,
-    DISCARDING leftover points if not divisible by k.
 
-    Steps:
-        1) Compute the Hilbert index for each point.
-        2) Sort points (and feats) by their Hilbert index.
-        3) Discard leftover points so total is divisible by k.
-        4) Split evenly into k contiguous chunks (all have the same size).
+    if points.dim() == 2:
+        points = points.unsqueeze(0)
 
-    Args:
-        points (torch.Tensor): [B, N, D]
-        feats (torch.Tensor, optional): [B, N, F]. Defaults to None.
-        k (int): Number of partitions
-        grid_size (int): Number of bits for Hilbert indexing
-        order:
+    if points.shape[-1] != 3:
+        raise ValueError("points.shape[-1] must be 3 for XYZ coords")
 
-    Returns:
-        split_points (List[torch.Tensor]): k tensors, each [B, M, D]
-        split_feats  (List[torch.Tensor]): if feats is provided, k tensors [B, M, F]
+    B, N, _ = points.shape
+    # device = points.device
+
+    # ---------- 1. normalise to [0,1] per‑batch ---------- #
+    mins = points.amin(dim=1, keepdim=True)
+    maxs = points.amax(dim=1, keepdim=True)
+    span = (maxs - mins).clamp_min_(1e-9)
+    pts_norm = (points - mins) / span            # [0,1]
+
+    # ---------- 2. quantise to integer grid -------------- #
+    max_val = (1 << bits) - 1
+    coords_int = (pts_norm * max_val).round().long().clamp_(0, max_val)  # (B,N,3)
+
+    # ---------- 3. axis re‑order ------------------------- #
+    ax_to_idx = {c: i for i, c in enumerate("xyz")}
+    order = [ax_to_idx[c] for c in axis_priority] if axis_priority else [0, 1, 2]
+    coords_int = coords_int[..., order]           # permute last dim
+
+    # ---------- 4. Hilbert distance ---------------------- #
+    hc = HilbertCurveBatch(p=bits, n=3)
+    if labels is None:
+        dists = hc.distances_from_points_batch(coords_int)
+    else:
+        dists = hc.distances_from_points_label_center_batch_torch(
+            coords_int, labels, label_offset=2)
+
+    return dists
+
+# -----------------------------------------------------------------------------
+#  Split a batched point cloud into *k* Hilbert‑contiguous chunks
+# -----------------------------------------------------------------------------
+
+def divide_point_cloud_curve(
+    points: torch.Tensor,                    # [B,N,3]
+    feats = None,    # [B,N,F]
+    labels = None,   # [B,N]
+    k: int = 6,
+    bits: int = 10,
+    axis_priority: str = "xyz"
+):
+    """Return K equal‑sized chunks along the Hilbert order.
+
+    Any leftover points ( are *discarded* so every split has exactly the
+    same size – convenient for downstream batching.
     """
+
+    if points.dim() != 3:
+        raise ValueError("points must be (B,N,3)")
+    if feats is not None and feats.shape[:2] != points.shape[:2]:
+        raise ValueError("feats shape must match points batch & N")
+    if labels is not None and labels.shape[:2] != points.shape[:2]:
+        raise ValueError("labels shape must match points batch & N")
+
     B, N, D = points.shape
-    if grid_size > 1:
-        # 1) Compute Hilbert indices and sort
-        # hilbert_indices = compute_hilbert_indices(points, precision=int(grid_size))
-        hilbert_indices = compute_hilbert_indices(points, precision=int(grid_size), rank_axis=order, labels=labels)
-        sorted_indices = torch.argsort(hilbert_indices, dim=1)  # (B, N)
-        sorted_points = torch.gather(points, 1, sorted_indices.unsqueeze(-1).expand(-1, -1, D))
 
-        if feats is not None:
-            F_dim = feats.shape[-1]
-            sorted_feats = torch.gather(feats, 1, sorted_indices.unsqueeze(-1).expand(-1, -1, F_dim))
-        else:
-            sorted_feats = None
+    # ---- 1. sort along Hilbert curve ---- #
+    hilbert_idx = compute_hilbert_indices(points, bits=bits, axis_priority=axis_priority, labels=labels)
+    sort_idx = hilbert_idx.argsort(dim=1)  # (B,N)
+
+    gather_xyz = sort_idx.unsqueeze(-1).expand(-1, -1, 3)
+    sorted_points = torch.gather(points, 1, gather_xyz)            # [B,N,3]
+
+    if feats is not None:
+        gather_feat = sort_idx.unsqueeze(-1).expand(-1, -1, feats.shape[-1])
+        sorted_feats = torch.gather(feats, 1, gather_feat)
     else:
-        sorted_points, sorted_feats = rank_point_clouds_by_hilbert(points, feats, grid_size=grid_size, order=order)
+        sorted_feats = None
 
-    # 2) Discard leftover points (losing a few points if N % k != 0)
-    #    We'll keep only M = (N // k) * k points.
+    sorted_labels = torch.gather(labels, 1, sort_idx) if labels is not None else None
+
+    # ---- 2. keep first ⌊N/k⌋·k points ---- #
     M = (N // k) * k
-    kept_points = sorted_points[:, :M, :]  # shape [B, M, D]
-    if sorted_feats is not None:
-        kept_feats = sorted_feats[:, :M, :]
-    else:
-        kept_feats = None
+    if M == 0:
+        raise ValueError(f"N={N} smaller than k={k}; cannot split")
 
-    # If M = 0 (edge case: N < k), then all partitions will be empty.
-    #   This is the "discard leftover" policy, so we respect that.
+    pts_kept = sorted_points[:, :M]
+    feats_kept = sorted_feats[:, :M] if sorted_feats is not None else None
+    labels_kept = sorted_labels[:, :M] if sorted_labels is not None else None
 
-    # 3) Each chunk will have exactly chunk_size = M // k points
-    chunk_size = M // k
+    chunk = M // k
 
-    # 4) Split into k equal chunks (no leftover)
-    split_points = []
-    split_feats = [] if kept_feats is not None else None
+    split_points = [pts_kept[:, i*chunk:(i+1)*chunk] for i in range(k)]
+    split_feats  = [feats_kept[:, i*chunk:(i+1)*chunk] for i in range(k)] if feats_kept is not None else None
+    split_labels = [labels_kept[:, i*chunk:(i+1)*chunk] for i in range(k)] if labels_kept is not None else None
 
-    start_idx = 0
-    for i in range(k):
-        end_idx = start_idx + chunk_size
-        split_points.append(kept_points[:, start_idx:end_idx, :])  # [B, chunk_size, D]
-        if kept_feats is not None:
-            split_feats.append(kept_feats[:, start_idx:end_idx, :])
-        start_idx = end_idx
-
-    if split_feats is not None:
-        return split_points, split_feats
-    return split_points, None
-
-
-
-
-if __name__ == '__main__':
-    # Example Usage:
-    from libs.lib_vis import visualize_multiple_point_clouds
-
-    pcd_data = torch.load('data.pt', map_location='cpu')
-    print(pcd_data.keys())
-    # pcd_data = torch.from_numpy(pcd_data.astype(np.float32))
-    # pcd_datas = torch.stack([pcd_data, pcd_data])
-    # pcd_datas = pcd_data.unsqueeze(0)
-    points = pcd_data['pcd']
-    feats = pcd_data['feats']
-    ranked_coords, ranked_feats = rank_point_clouds_by_hilbert(points, feats, grid_size=0.01, order=["hilbert"])
-    split_points, split_feats = divide_point_cloud_with_padding(ranked_coords, ranked_feats, k=4)
-    visualize_multiple_point_clouds(split_points, split_feats)
-    print(split_points[0].shape)
+    return split_points, split_feats, split_labels

@@ -41,7 +41,7 @@ class CaptionNet(nn.Module):
 
         self.train()
 
-    def forward(self, batch_data_label: dict, is_eval: bool = False, task_name: str = None, n_splits=-1) -> dict:
+    def forward(self, batch_data_label: dict, is_eval: bool = False, task_name: str = None, n_splits=4) -> dict:
 
         outputs = {'loss': torch.zeros(1)[0].cuda()}
 

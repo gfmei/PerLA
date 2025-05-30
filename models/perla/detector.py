@@ -285,33 +285,34 @@ class ModelVote2capDetr(nn.Module):
             "aux_outputs": aux_outputs,  # output from intermediate layers of decoder
         }
 
-    def split(self, point_clouds, labels, n_splits=4, order='x'):
+    def split(self, point_clouds, labels, n_splits=4, order='xyz'):
         points, feats = point_clouds[..., :3], point_clouds[..., 3:]
         # feats = torch.cat((feats, spts), dim=-1)
         # ranked_coords, ranked_feats = rank_point_clouds_by_hilbert(points, feats, grid_size=0.05, order=["hilbert"])
         # split_points, split_feats = divide_point_cloud_with_padding(ranked_coords, ranked_feats, k=n_splits)
         # points, feats=None, labels=None, k=6, grid_size=0.01, order="hilbert"
-        split_points, split_feats = divide_point_cloud_curve(points, feats, labels, k=n_splits, grid_size=10, order=order)
-        spt_list, xyz_list, feat_list = [], [], []
+        split_points, split_feats, split_segs = divide_point_cloud_curve(
+        points=points, feats=feats,  labels=labels, k=n_splits, bits=10, axis_priority=order)
+        seg_list, xyz_list, feat_list = [], [], []
 
         for i in range(n_splits):
             feats_i = split_feats[i]
-            point_clouds_i = torch.cat([split_points[i], feats_i[..., :(feats_i.size(-1) - 1)]], dim=-1)
+            point_clouds_i = torch.cat([split_points[i], feats_i], dim=-1)
             # point_clouds_i = torch.cat([split_points[i], feats_i], dim=-1)
             enc_xyz_i, enc_features_i, enc_inds_i = self.run_encoder(point_clouds_i)
             enc_features_i = enc_features_i.permute(1, 2, 0)
-            spts_i = index_points(feats_i[..., -1].unsqueeze(-1), enc_inds_i)
-            spt_list.append(spts_i)
+            seg_i = index_points(split_segs[i].unsqueeze(-1), enc_inds_i)
+            seg_list.append(seg_i.squeeze(-1))
             xyz_list.append(enc_xyz_i)
             feat_list.append(enc_features_i)
 
-        l_enc_spts = torch.cat(spt_list, dim=1)
+        l_enc_segs = torch.cat(seg_list, dim=1)
         l_enc_xyz = torch.cat(xyz_list, dim=1)
         l_enc_features = torch.cat(feat_list, dim=-1)
 
-        return l_enc_xyz, l_enc_features, l_enc_spts
+        return l_enc_xyz, l_enc_features, l_enc_segs
 
-    def forward(self, inputs, n_splits=-1, is_eval: bool = False, order='x'):
+    def forward(self, inputs, n_splits=-1, is_eval: bool = False, order='xyz'):
 
         point_clouds = inputs["point_clouds"]
         spts = inputs["spts"]
@@ -324,7 +325,7 @@ class ModelVote2capDetr(nn.Module):
         # encoder features: npoints x batch x channel -> batch x channel x npoints
         enc_xyz, enc_features, enc_inds = self.run_encoder(point_clouds)
         enc_features = enc_features.permute(1, 2, 0)
-        global_spts = index_points(spts, enc_inds)
+        global_spts = index_points(spts, enc_inds).squeeze(-1)
 
         # local enhancement for prompting features
         # neigh_indices, k_morton = search_neighbors_morton(enc_xyz, l_enc_xyz, n_neighbors=2*n_splits)
@@ -349,9 +350,11 @@ class ModelVote2capDetr(nn.Module):
         enc_features = self.encoder_to_decoder_projection(enc_features)
         l_enc_xyz, l_enc_features = None, None
         l_enc_spts = None
+        l_raw_enc_features = None
         if n_splits > 0:
-            l_enc_xyz, l_enc_features, l_enc_spts = self.split(point_clouds, labels=spts, n_splits=n_splits, order=order)
-            l_enc_features = self.encoder_to_decoder_projection(l_enc_features)
+            l_enc_xyz, l_raw_enc_features, l_enc_spts = self.split(
+                point_clouds, labels=spts.squeeze(-1), n_splits=n_splits, order=order)
+            l_enc_features = self.encoder_to_decoder_projection(l_raw_enc_features)
         enc_pos = self.pos_embedding(enc_xyz, input_range=point_cloud_dims)
 
         # decoder expects: npoints x batch x channel
@@ -382,15 +385,16 @@ class ModelVote2capDetr(nn.Module):
             'query_xyz': query_xyz,  # batch x nqueries x 3
         })
         box_predictions['outputs']['enc_spts'] = global_spts
-        npts = enc_xyz.size(1)
-        p_pcd_list, p_fea_list = None, None
+        # npts = enc_xyz.size(1)
+        # p_pcd_list, p_fea_list = None, None
         if n_splits > 0:
             l_enc_features = l_enc_features.permute(0, 2, 1)
-            p_pcd_list = [l_enc_xyz[:, i * npts:(i + 1) * npts] for i in range(n_splits)]
-            p_fea_list = [l_enc_features[:, i * npts:(i + 1) * npts] for i in range(n_splits)]
+            # p_pcd_list = [l_enc_xyz[:, i * npts:(i + 1) * npts] for i in range(n_splits)]
+            # p_fea_list = [l_enc_features[:, i * npts:(i + 1) * npts] for i in range(n_splits)]
             box_predictions['outputs']['l_enc_spts'] = l_enc_spts
-            box_predictions['outputs']['l_enc_xyz'] = p_pcd_list
-            box_predictions['outputs']['l_enc_feats'] = p_fea_list
+            box_predictions['outputs']['l_enc_xyz'] = l_enc_xyz
+            box_predictions['outputs']['l_enc_feats'] = l_enc_features
+            box_predictions['outputs']['l_raw_enc_feats'] = l_raw_enc_features
 
         return box_predictions['outputs']
 
