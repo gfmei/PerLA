@@ -5,19 +5,13 @@
 
 """ Helper functions and class to calculate Average Precisions for 3D object detection.
 """
-import logging
-import os
-import sys
 from collections import OrderedDict
 
 import numpy as np
-import scipy.special as scipy_special
-import torch
 
-from utils.box_util import (extract_pc_in_box3d, flip_axis_to_camera_np,
-                            get_3d_box, get_3d_box_batch)
-from utils.eval_det import eval_det_multiprocessing, get_iou_obb
-from utils.nms import nms_2d_faster, nms_3d_faster, nms_3d_faster_samecls
+from libs.box_util import (extract_pc_in_box3d)
+from libs.eval_det import eval_det_multiprocessing
+from libs.nms import nms_2d_faster, nms_3d_faster, nms_3d_faster_samecls
 
 
 def flip_axis_to_depth(pc):
@@ -37,7 +31,7 @@ def softmax(x):
 
 # This is exactly the same as VoteNet so that we can compare evaluations.
 def parse_predictions(
-    predicted_boxes, sem_cls_probs, objectness_probs, point_cloud, config_dict
+        predicted_boxes, sem_cls_probs, objectness_probs, point_cloud, config_dict
 ):
     """Parse predictions to OBB parameters and suppress overlapping boxes
 
@@ -205,7 +199,7 @@ def parse_predictions(
                     )
                     for j in range(pred_corners_3d_upright_camera.shape[1])
                     if pred_mask[i, j] == 1
-                    and obj_prob[i, j] > config_dict["conf_thresh"]
+                       and obj_prob[i, j] > config_dict["conf_thresh"]
                 ]
             batch_pred_map_cls.append(cur_list)
         elif config_dict["use_cls_confidence_only"]:
@@ -218,7 +212,7 @@ def parse_predictions(
                     )
                     for j in range(pred_corners_3d_upright_camera.shape[1])
                     if pred_mask[i, j] == 1
-                    and obj_prob[i, j] > config_dict["conf_thresh"]
+                       and obj_prob[i, j] > config_dict["conf_thresh"]
                 ]
             )
         else:
@@ -231,7 +225,7 @@ def parse_predictions(
                     )
                     for j in range(pred_corners_3d_upright_camera.shape[1])
                     if pred_mask[i, j] == 1
-                    and obj_prob[i, j] > config_dict["conf_thresh"]
+                       and obj_prob[i, j] > config_dict["conf_thresh"]
                 ]
             )
 
@@ -239,16 +233,16 @@ def parse_predictions(
 
 
 def get_ap_config_dict(
-    remove_empty_box=True,
-    use_3d_nms=True,
-    nms_iou=0.25,
-    use_old_type_nms=False,
-    cls_nms=True,
-    per_class_proposal=True,
-    use_cls_confidence_only=False,
-    conf_thresh=0.05,
-    no_nms=False,
-    dataset_config=None,
+        remove_empty_box=True,
+        use_3d_nms=True,
+        nms_iou=0.25,
+        use_old_type_nms=False,
+        cls_nms=True,
+        per_class_proposal=True,
+        use_cls_confidence_only=False,
+        conf_thresh=0.05,
+        no_nms=False,
+        dataset_config=None,
 ):
     """
     Default mAP evaluation settings for VoteNet
@@ -273,12 +267,12 @@ class APCalculator(object):
     """Calculating Average Precision"""
 
     def __init__(
-        self,
-        dataset_config,
-        ap_iou_thresh=[0.25, 0.5],
-        class2type_map=None,
-        exact_eval=True,
-        ap_config_dict=None,
+            self,
+            dataset_config,
+            ap_iou_thresh=[0.25, 0.5],
+            class2type_map=None,
+            exact_eval=True,
+            ap_config_dict=None,
     ):
         """
         Args:
@@ -322,14 +316,14 @@ class APCalculator(object):
         )
 
     def step(
-        self,
-        predicted_box_corners,
-        sem_cls_probs,
-        objectness_probs,
-        point_cloud,
-        gt_box_corners,
-        gt_box_sem_cls_labels,
-        gt_box_present,
+            self,
+            predicted_box_corners,
+            sem_cls_probs,
+            objectness_probs,
+            point_cloud,
+            gt_box_corners,
+            gt_box_sem_cls_labels,
+            gt_box_present,
     ):
         """
         Perform NMS on predicted boxes and threshold them according to score.
@@ -416,7 +410,7 @@ class APCalculator(object):
                     if x == "mAP" or x == "AR":
                         pass
                     else:
-                        met_str = f"{x}: {overall_ret[ap_iou_thresh][x]*100:.2f}"
+                        met_str = f"{x}: {overall_ret[ap_iou_thresh][x] * 100:.2f}"
                         per_class_metrics.append(met_str)
 
         ap_header = [f"mAP{x:.2f}" for x in self.ap_iou_thresh]
@@ -439,7 +433,7 @@ class APCalculator(object):
         metrics_dict = {}
         for ap_iou_thresh in self.ap_iou_thresh:
             metrics_dict[f"mAP_{ap_iou_thresh}"] = (
-                overall_ret[ap_iou_thresh]["mAP"] * 100
+                    overall_ret[ap_iou_thresh]["mAP"] * 100
             )
             metrics_dict[f"AR_{ap_iou_thresh}"] = overall_ret[ap_iou_thresh]["AR"] * 100
         return metrics_dict

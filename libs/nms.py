@@ -1,10 +1,39 @@
+import sys
+
 import numpy as np
-from pc_utils import bbox_corner_dist_measure
+# from pc_utils import bbox_corner_dist_measure
 
 # boxes are axis aigned 2D boxes of shape (n,5) in FLOAT numbers with (x1,y1,x2,y2,score)
 ''' Ref: https://www.pyimagesearch.com/2015/02/16/faster-non-maximum-suppression-python/
 Ref: https://github.com/vickyboy47/nms-python/blob/master/nms.py 
 '''
+
+
+# ----------------------------------------
+# BBox
+# ----------------------------------------
+def bbox_corner_dist_measure(crnr1, crnr2):
+    """ compute distance between box corners to replace iou
+    Args:
+        crnr1, crnr2: Nx3 points of box corners in camera axis (y points down)
+        output is a scalar between 0 and 1
+    """
+
+    dist = sys.maxsize
+    for y in range(4):
+        rows = ([(x + y) % 4 for x in range(4)] + [4 + (x + y) % 4 for x in range(4)])
+        d_ = np.linalg.norm(crnr2[rows, :] - crnr1, axis=1).sum() / 8.0
+        if d_ < dist:
+            dist = d_
+
+    u = sum([np.linalg.norm(x[0, :] - x[6, :]) for x in [crnr1, crnr2]]) / 2.0
+
+    measure = max(1.0 - dist / u, 0)
+    print(measure)
+
+    return measure
+
+
 def nms_2d(boxes, overlap_threshold):
     x1 = boxes[:,0]
     y1 = boxes[:,1]
