@@ -16,7 +16,9 @@
     
     Ref: https://raw.githubusercontent.com/rbgirshick/py-faster-rcnn/master/lib/datasets/voc_eval.py
 """
+from multiprocessing import Pool
 import numpy as np
+
 from libs.box_util import box3d_iou
 
 
@@ -64,7 +66,7 @@ def get_iou_main(get_iou_func, args):
 
 
 def eval_det_cls(
-    pred, gt, ovthresh=0.25, use_07_metric=False, get_iou_func=get_iou_obb
+        pred, gt, ovthresh=0.25, use_07_metric=False, get_iou_func=get_iou_obb
 ):
     """Generic functions to compute precision/recall for object detection
     for a single class.
@@ -208,11 +210,8 @@ def eval_det(pred_all, gt_all, ovthresh=0.25, use_07_metric=False, get_iou_func=
     return rec, prec, ap
 
 
-from multiprocessing import Pool
-
-
 def eval_det_multiprocessing(
-    pred_all, gt_all, ovthresh=0.25, use_07_metric=False, get_iou_func=get_iou_obb
+        pred_all, gt_all, ovthresh=0.25, use_07_metric=False, get_iou_func=get_iou_obb
 ):
     """Generic functions to compute precision/recall for object detection
     for multiple classes.
