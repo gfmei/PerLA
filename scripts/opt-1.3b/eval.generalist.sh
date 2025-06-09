@@ -25,8 +25,8 @@ python main.py \
     --use_color --use_normal \
     --detector perla \
     --captioner perla \
-    --checkpoint_dir ./ckpts/opt-1.3b/ll3da-generalist \
-    --test_ckpt ./ckpts/opt-1.3b/ll3da-generalist/ll3da-opt-1.3b.pth \
+    --checkpoint_dir ./ckpts/opt-1.3b/perla-generalist \
+    --test_ckpt ./ckpts/opt-1.3b/perla-generalist/perla-opt-1.3b.pth \
     --dataset unified_3dllm_scene_description \
     --vocab facebook/opt-1.3b \
     --qformer_vocab bert-base-embedding \
