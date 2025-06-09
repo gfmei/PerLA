@@ -1,5 +1,5 @@
 export PYTHONWARNINGS='ignore:semaphore_tracker:UserWarning'
-export CUDA_VISIBLE_DEVICES=0
+#export CUDA_VISIBLE_DEVICES=0
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export OMP_NUM_THREADS=1
@@ -18,7 +18,7 @@ python main.py \
     --dist_url tcp://localhost:29400 \
     --criterion 'CiDEr' \
     --freeze_detector --freeze_llm \
-    --batchsize_per_gpu 8 --ngpus 1 \
+    --batchsize_per_gpu 2 --ngpus 1 \
     --max_des_len 256 \
     --max_prompt 1 \
     --use_beam_search \
