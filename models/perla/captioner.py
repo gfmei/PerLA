@@ -246,8 +246,8 @@ class Captioner(nn.Module):
         ## caption generation cores
         self.transformer = AutoModelForCausalLM.from_pretrained(
             args.vocab,
-            torch_dtype=self.dtype
-        )
+            torch_dtype=self.dtype,
+            use_safetensors=True)
         self.n_embd = self.transformer.config.hidden_size
 
         ## Multi-modality Transformer
@@ -257,7 +257,8 @@ class Captioner(nn.Module):
         )
         self.qformer = InstructBlipQFormerModel.from_pretrained(
             args.qformer_vocab,
-            config=qformer_config
+            config=qformer_config,
+            # use_safetensors=True
         )
         self.qformer_hidden_size = qformer_config.hidden_size
 

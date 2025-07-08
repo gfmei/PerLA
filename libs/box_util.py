@@ -11,7 +11,7 @@ from scipy.spatial import ConvexHull, Delaunay
 from libs.misc import to_list_1d, to_list_3d
 
 try:
-    from utils.box_intersection import box_intersection
+    from libs.box_intersection import box_intersection
 except ImportError:
     print(
         "Could not import cythonized box intersection. Consider compiling box_intersection.pyx for faster training."
