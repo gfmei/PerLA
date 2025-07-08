@@ -244,7 +244,7 @@ class ScanNetBaseDataset(Dataset):
         ret_dict["point_cloud_dims_min"] = point_cloud_dims_min.astype(np.float32)
         ret_dict["point_cloud_dims_max"] = point_cloud_dims_max.astype(np.float32)
         ret_dict["gt_object_ids"] = object_ids.astype(np.int64)
-        ret_dict['instance_bboxes'] = instance_bboxes.astype(np.float32)
+        # ret_dict['instance_bboxes'] = instance_bboxes.astype(np.float32)
 
         # compute votes *AFTER* augmentation
         # generate votes

@@ -84,7 +84,7 @@ def make_args_parser():
     parser.add_argument('--vocab', default="llama-hf/7B", type=str, help="The LLM backend")
     parser.add_argument('--qformer_vocab', default="bert-base-uncased", type=str, help="The QFormer backend")
 
-    parser.add_argument("--dataset_num_workers", default=4, type=int)
+    parser.add_argument("--dataset_num_workers", default=2, type=int)
     parser.add_argument("--batchsize_per_gpu", default=8, type=int)
 
     ##### Training #####

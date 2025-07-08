@@ -19,24 +19,68 @@ call the original single-sample methods in a loop, and reshape results back to
 import multiprocessing
 from multiprocessing import Pool
 from typing import Iterable, List, Union
+from typing import Tuple
 
 import torch
 
 
-def quantise_to_grid(xyz: torch.Tensor, bits: int = 10):
+# ──────────────────────────────────────────────────────────────────────────────
+# Quantise → integer grid
+# ──────────────────────────────────────────────────────────────────────────────
+def quantise_to_grid(
+        xyz: torch.Tensor,  # [..., 3]  float
+        bits: int = 10
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Map float xyz (…) to integer coords in [0, 2**bits – 1] per-batch.
+    Map *arbitrary-rank* xyz (…) into integers in [0, 2**bits – 1] **per sample**.
+
+    The function:
+      • treats axis 0 as the batch dimension,
+      • compresses *all remaining* point axes into one when computing mins/maxs,
+      • returns `q_xyz`, `mins`, `span` ready for broadcasting.
+
+    Shapes
+    ------
+    xyz: [B, P1, …, Pk, 3]
+    q_xyz : same as xyz but int
+    mins: [B,      1, …, 1, 3]   (k singleton point axes)
+    span: same shape as mins
     """
     xyz = xyz.float()
-    mins = xyz.amin(dim=-2, keepdim=True)
-    span = (xyz.amax(dim=-2, keepdim=True) - mins).clamp_min_(1e-9)
-    max_val = (1 << bits) - 1                       # 2**bits – 1
-    return ((xyz - mins) / span * max_val).round().long(), span, mins
+    max_val = (1 << bits) - 1  # 2**bits – 1
 
-def dequantise_from_grid(quantized: torch.Tensor, mins: torch.Tensor, span: torch.Tensor, bits: int = 10) -> torch.Tensor:
+    # axes to reduce = all except batch (0) and xyz (-1)
+    reduce_axes = tuple(range(1, xyz.dim() - 1))
+
+    mins = xyz.amin(dim=reduce_axes, keepdim=True)
+    maxs = xyz.amax(dim=reduce_axes, keepdim=True)
+    span = (maxs - mins).clamp_min_(1e-9)
+
+    q_xyz = ((xyz - mins) / span * max_val).round().long()
+    return q_xyz, span, mins
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# De-quantise ← float grid
+# ──────────────────────────────────────────────────────────────────────────────
+def dequantise_from_grid(
+        quantized: torch.Tensor,  # [..., 3]  int / uint
+        mins: torch.Tensor,  # broadcastable with quantized
+        span: torch.Tensor,  # broadcastable with quantized
+        bits: int = 10
+) -> torch.Tensor:
     """
-    Recover original xyz values from quantized coords using stored mins and span.
+    Recover original xyz values from the integer grid produced by `quantise_to_grid`.
+
+    Assumes `mins` / `span` already have the singleton dimensions that match
+    the point axes of `quantized` (they will if they come straight from
+    `quantise_to_grid`).
     """
+    # add singleton dims: axis 1, 1, 1, … (right before the xyz dim)
+    while mins.dim() < quantized.dim():
+        mins  = mins.unsqueeze(1)
+        span  = span.unsqueeze(1)
+
     max_val = (1 << bits) - 1
     return quantized.float() / max_val * span + mins
 
@@ -521,17 +565,17 @@ class HilbertCurveBatch:
     #
     #     return comb  # or keep sorting/gather logic as before
 
-        # # Finally, sort points per-batch by combined_dist
-        # sorted_vals, sorted_indices = torch.sort(combined_dist_2d, dim=1)  # (B, N)
-        # # reorder points, labels, dists
-        # sorted_points_3d = torch.gather(
-        #     points_3d, dim=1,
-        #     index=sorted_indices.unsqueeze(-1).expand(B, N, d)
-        # )
-        # sorted_labels_2d = torch.gather(labels_2d, dim=1, index=sorted_indices)
-        # sorted_dists_2d = torch.gather(points_dist_2d, dim=1, index=sorted_indices)
-        #
-        # return sorted_points_3d, sorted_labels_2d, sorted_dists_2d, label_block_ids_2d
+    # # Finally, sort points per-batch by combined_dist
+    # sorted_vals, sorted_indices = torch.sort(combined_dist_2d, dim=1)  # (B, N)
+    # # reorder points, labels, dists
+    # sorted_points_3d = torch.gather(
+    #     points_3d, dim=1,
+    #     index=sorted_indices.unsqueeze(-1).expand(B, N, d)
+    # )
+    # sorted_labels_2d = torch.gather(labels_2d, dim=1, index=sorted_indices)
+    # sorted_dists_2d = torch.gather(points_dist_2d, dim=1, index=sorted_indices)
+    #
+    # return sorted_points_3d, sorted_labels_2d, sorted_dists_2d, label_block_ids_2d
 
     # -----------------------------------------------------------------------
     # Approximate kNN with NO for-loop over queries

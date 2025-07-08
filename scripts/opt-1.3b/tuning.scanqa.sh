@@ -21,6 +21,6 @@ python main.py \
     --save_every 10000 \
     --criterion 'CiDEr' \
     --freeze_detector --freeze_llm \
-    --batchsize_per_gpu 1 --ngpus 1 --base_lr 1e-4 --final_lr 1e-6 \
+    --batchsize_per_gpu 2 --ngpus 1 --base_lr 1e-4 --final_lr 1e-6 \
     --max_des_len 224 \
     --max_prompt 1 --use_beam_search
