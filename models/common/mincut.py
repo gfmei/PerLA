@@ -507,7 +507,7 @@ def welsch_loss(pred, tgt, sigma=1.0):
 if __name__ == '__main__':
     # import open3d as o3d
     import numpy as np
-    from utils.lib_vis import visualize_multiple_point_clouds
+    from libs.lib_vis import visualize_multiple_point_clouds
     from models.common.serialization import rank_point_clouds_by_hilbert, divide_point_cloud_with_padding
 
     # pcds = o3d.io.read_point_cloud('plane.ply')
