@@ -10,7 +10,7 @@ sys.path.append(os.path.join(cwd, 'libs'))
 sys.path.append(os.path.join(cwd, 'datasets'))
 
 from libs.dist import is_distributed
-from datasets.scannet_base_dataset import DatasetConfig
+from datasets.data_config import DatasetConfig
 from libs.misc import my_worker_init_fn
 
 

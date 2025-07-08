@@ -1,51 +1,71 @@
+import os
+
 import numpy as np
-import open3d as o3d
 import torch
 from hilbertcurve.hilbertcurve import HilbertCurve
 
+from libs.lib_spts import num_to_natural_numpy
+from libs.lib_vis import visualize_multiple_point_clouds, visualize_clusters, visualize_grouped_points
+from libs.pc_utils import index_points, farthest_point_sample
+from libs.scannet200_constants import SCANNET_COLOR_MAP_200
+from models.common.hilbert_util import HilbertCurveBatch
 from models.common.serialization import divide_point_cloud_curve
-from utils.lib_vis import visualize_multiple_point_clouds
+import open3d as o3d
 
 
-def compute_hilbert_indices(points, precision=10):
+# # ------------------------------------------------------------------
+# # Farthest-Point Sampling in PyTorch (Single Batch)
+# # ------------------------------------------------------------------
+def farthest_point_sampling(points: torch.Tensor, n_samples: int) -> torch.Tensor:
     """
-    Compute Hilbert indices for a batch of 3D points.
-
-    Args:
-        points (torch.Tensor): Input point cloud of shape [B, N, D].
-        precision (int): Number of bits to use for each coordinate.
-
-    Returns:
-        torch.Tensor: Hilbert indices of shape [B, N].
+    points: (N, 3) or (N, D)
+    Return the indices of the 'n_samples' chosen by farthest point sampling.
     """
-    B, N, D = points.shape
     device = points.device
+    N = points.shape[0]
+    if n_samples >= N:
+        return torch.arange(N, device=device)
 
-    # 1) Normalize point cloud to [0, 1] range
-    p_min = points.amin(dim=1, keepdim=True)  # (B, 1, D)
-    p_max = points.amax(dim=1, keepdim=True)  # (B, 1, D)
-    normalized_pc = (points - p_min) / (p_max - p_min + 1e-8)  # (B, N, D)
+    # We'll keep an array for the chosen indices
+    sampled_inds = torch.zeros(n_samples, dtype=torch.long, device=device)
+    # We'll also keep track of the distance from each point to the nearest chosen
+    dist2chosen = torch.full((N,), float('inf'), device=device)
 
-    # 2) Quantize coordinates to integers
-    max_value = 2 ** precision - 1
-    int_coords = (normalized_pc * max_value).long().clamp(0, max_value)  # (B, N, D)
+    # Step 1: pick any initial point (say index 0)
+    chosen_idx = 0
+    sampled_inds[0] = chosen_idx
 
-    # 3) Create a Hilbert curve object (for 3D: n=3)
-    hilbert_curve = HilbertCurve(p=precision, n=D)
+    # We do a loop
+    for i in range(1, n_samples):
+        # Update distances to newly chosen point
+        chosen_xyz = points[chosen_idx]  # (3,)
+        diff = points - chosen_xyz
+        dist_sq = torch.sum(diff * diff, dim=1)
+        dist2chosen = torch.minimum(dist2chosen, dist_sq)
 
-    # 4) Compute Hilbert indices for each batch item
-    hilbert_indices = torch.zeros(B, N, dtype=torch.long, device=device)
-    for b in range(B):
-        # Convert the coordinates for this batch item into a Python list of points
-        coords_b = int_coords[b].tolist()  # shape (N, D) => list of N sublists of length D
+        # pick the farthest point
+        chosen_idx = torch.argmax(dist2chosen)
+        sampled_inds[i] = chosen_idx
 
-        # Use distances_from_points to get a list of Hilbert distances
-        distances = hilbert_curve.distances_from_points(coords_b)
+    return sampled_inds
 
-        # Convert into a PyTorch tensor on the correct device
-        hilbert_indices[b] = torch.tensor(distances, device=device, dtype=torch.long)
 
-    return hilbert_indices
+def quantise_to_grid(xyz: torch.Tensor, bits: int = 10):
+    """
+    Map float xyz (…) to integer coords in [0, 2**bits – 1] per-batch.
+    """
+    xyz = xyz.float()
+    mins = xyz.amin(dim=-2, keepdim=True)
+    span = (xyz.amax(dim=-2, keepdim=True) - mins).clamp_min_(1e-9)
+    max_val = (1 << bits) - 1                       # 2**bits – 1
+    return ((xyz - mins) / span * max_val).round().long(), span, mins
+
+def dequantise_from_grid(quantized: torch.Tensor, mins: torch.Tensor, span: torch.Tensor, bits: int = 10) -> torch.Tensor:
+    """
+    Recover original xyz values from quantized coords using stored mins and span.
+    """
+    max_val = (1 << bits) - 1
+    return quantized.float() / max_val * span + mins
 
 
 def replicate_points_for_equal_splits(points, feats=None, k=6):
@@ -87,30 +107,122 @@ def replicate_points_for_equal_splits(points, feats=None, k=6):
     return expanded_points, None
 
 
+def main():
+    scene = "scene0606_01"                     # ← change scan ID here
+    root   = "/data/disk1/data/scannet/scannet_llm"
+
+    xyzrgbn = np.load(f"{root}/{scene}_aligned_vert.npy")   # (N,6)
+    spt_np  = np.load(f"{root}/{scene}_spt.npy")            # (N,)
+
+    pts  = torch.from_numpy(xyzrgbn[:, :3]).cuda()          # xyz (N,3)
+    spts = torch.from_numpy(spt_np.astype(np.int64)).cuda() # labels (N,)
+
+    # -------- queries via FPS ----------------------------------------
+    M = 2048
+    q_idx = farthest_point_sampling(pts, M)
+    Q_xyz = pts[q_idx]             # (M,3)
+    Q_lbl = spts[q_idx]            # (M,)
+
+    # -------- batch dims --------------------------------------------
+    P_xyz = pts.unsqueeze(0)       # (1,N,3)
+    L_p   = spts.unsqueeze(0)      # (1,N)
+    Q_xyz_b = Q_xyz.unsqueeze(0)   # (1,M,3)
+    L_q   = Q_lbl.unsqueeze(0)     # (1,M)
+
+    # -------- Hilbert k-NN ------------------------------------------
+    hilbert = HilbertCurveBatch(p=10, n=3)
+    bits    = hilbert.p
+
+    P_int = quantise_to_grid(P_xyz, bits)      # integer coords for Hilbert
+    Q_int = quantise_to_grid(Q_xyz_b, bits)
+
+    K = 16
+    neigh_int, neigh_idx, same_mask = hilbert.approx_knn_hilbert_batch(
+        P_int, Q_int, L_p, L_q,
+        K=K,
+        search_window=32
+    )
+    # neigh_idx : (1, M, K)
+
+    # -------- gather ORIGINAL xyz using indices ----------------------
+    B, Mq, Kq = neigh_idx.shape
+    flat_idx = neigh_idx.view(-1)               # (M*K,)
+    gathered  = P_xyz[0].index_select(0, flat_idx)  # (M*K,3)
+    neigh_xyz = gathered.view(1, Mq, Kq, 3)[0].cpu()  # (M,K,3)
+
+    mask = same_mask[0].cpu().bool()            # (M,K)
+
+    # -------- build colourised neighbour cloud ----------------------
+    pts_list, col_list = [], []
+    for i in range(Mq):
+        valid = neigh_xyz[i][mask[i]]           # (#valid,3)
+        if not len(valid): continue
+        col = np.array(SCANNET_COLOR_MAP_200[(i % 255) + 1]) / 255.0
+        pts_list.append(valid)
+        col_list.append(torch.tensor(col).repeat(valid.shape[0], 1))
+
+    if not pts_list:
+        print("No valid neighbours found.")
+        return
+
+    pc_knn = o3d.geometry.PointCloud()
+    pc_knn.points = o3d.utility.Vector3dVector(torch.cat(pts_list).numpy())
+    pc_knn.colors = o3d.utility.Vector3dVector(torch.cat(col_list).numpy())
+
+    o3d.io.write_point_cloud("knn.ply", pc_knn)
+    print("Saved knn.ply – launching viewer …")
+    o3d.visualization.draw_geometries([pc_knn])
+
+
 if __name__ == '__main__':
     # Example Usage:
-    root = '/data/disk1/data/scannet/scans/scene0145_00/scene0145_00_vh_clean.ply'
-    pcd = o3d.io.read_point_cloud(root)
-    # name = 'scene0145_00'
-    # root = '/data/disk1/data/scannet/llm3da/{}_vert.npy'.format(name)
-    # pcd_data = np.load(root)
-    # pcd_data = torch.from_numpy(pcd_data.astype(np.float32)).cuda()
-    # points = pcd_data[:, :3].unsqueeze(0)
-    # feats = pcd_data[:, 3:].unsqueeze(0)
-    divisions = np.array([1, 2, 3])  # Number of partitions along each axis
-    # voxel_partition(pcd, divisions)
-    # voxel_partition([pcd_data[:, :3], pcd_data[:, 3:6] / 255, pcd_data[:, 6:9]], divisions)
-    # pcd_data = torch.load('data.pt', map_location='cpu')
-    # print(pcd_data.keys())
-    # # pcd_data = torch.from_numpy(pcd_data.astype(np.float32))
-    # # pcd_datas = torch.stack([pcd_data, pcd_data])
-    # # pcd_datas = pcd_data.unsqueeze(0)
-    points = torch.from_numpy(np.asarray(pcd.points)).cuda().float().unsqueeze(0)
-    colors = torch.from_numpy(np.asarray(pcd.colors)).cuda().float()
-    normals = torch.from_numpy(np.asarray(pcd.normals)).cuda().float()
-    feats = torch.cat([colors, normals], dim=1).unsqueeze(0)
-    # ranked_coords, ranked_feats = rank_point_clouds_by_hilbert(points, feats, grid_size=0.01, order=["hilbert"])
-    split_points, split_feats = divide_point_cloud_curve(points, feats, k=6, grid_size=10, order='x')
-    #
-    visualize_multiple_point_clouds(split_points, split_feats)
-    # # print(split_points[0].shape)
+    import numpy as np
+    import os
+    from libs.lib_spts import num_to_natural_numpy
+    from libs.lib_vis import visualize_multiple_point_clouds
+    hilbert_curve = HilbertCurveBatch(p=10, n=3)
+    data_path = '/data/disk1/data/scannet/scannet_llm'
+    scan_name = 'scene0606_01'
+    mesh_vertices = np.load(os.path.join(data_path, scan_name) + "_aligned_vert.npy")
+    instance_labels = np.load(
+        os.path.join(data_path, scan_name) + "_ins_label.npy"
+    )
+    semantic_labels = np.load(
+        os.path.join(data_path, scan_name) + "_sem_label.npy"
+    )
+    instance_bboxes = np.load(os.path.join(data_path, scan_name) + "_aligned_bbox.npy")
+    spt_labels = np.load(os.path.join(data_path, scan_name) + "_spt.npy")
+    spt_labels = num_to_natural_numpy(spt_labels, -1)
+    pcd_data = torch.from_numpy(mesh_vertices.astype(np.float32))
+    # pcd_datas = torch.stack([pcd_data, pcd_data])
+    # pcd_datas = pcd_data.unsqueeze(0)
+    visualize_clusters(pcd_data[:, :3], spt_labels.tolist(), name='demo/sem/output_all')
+    # visualize_clusters(pcd_data[:, :3], instance_labels.tolist(), name='demo/ins/output')
+    points = pcd_data[:, :3].unsqueeze(0).cuda()
+    feats = pcd_data[:, 3:9].unsqueeze(0).cuda()
+    spt_labels = torch.from_numpy(spt_labels).unsqueeze(0).cuda()
+    # # ranked_coords, ranked_feats = rank_point_clouds_by_hilbert(points, feats, grid_size=0.01, order=["hilbert"])
+    # # split_points, split_feats = divide_point_cloud_with_padding(ranked_coords, ranked_feats, k=4)
+    split_points, split_feats, split_labels = divide_point_cloud_curve(
+        points, feats=feats, labels=spt_labels, k=6, axis_priority="xyz")
+    # print(split_points[1].shape)
+    visualize_multiple_point_clouds(split_points, split_feats, name='demo/pcd/output')
+    # visualize_clusters(split_points[4][0].cpu().numpy(), split_labels[4].view(-1).tolist(), name='demo/sem/output_split')
+    c_ids = farthest_point_sample(points, 512)
+    c_points = index_points(points, c_ids)
+    c_spts = index_points(spt_labels.unsqueeze(-1), c_ids).squeeze(-1)
+    BITS = hilbert_curve.p  # keep the same precision
+
+    p_int, span, mins = quantise_to_grid(torch.cat(split_points, dim=1), bits=BITS)
+    q_int = quantise_to_grid(c_points, bits=BITS)[0]
+
+    neighbors_points, labels_nb, same_mask = hilbert_curve.approx_knn_hilbert_batch(
+        p_int,  # ► integer coords, no negatives
+        q_int,
+        torch.cat(split_labels, dim=1),
+        c_spts,
+        K=64,  # 2*6
+        search_window=128
+    )
+    print(neighbors_points.shape)
+    visualize_grouped_points(dequantise_from_grid(neighbors_points[0], mins, span), filename='demo/pcd/output_knn')
