@@ -320,8 +320,7 @@ class ModelVote2capDetr(nn.Module):
             inputs["point_cloud_dims_min"],
             inputs["point_cloud_dims_max"],
         ]
-        # spts = inputs["superpoints"]
-        ## feature encoding
+        # feature encoding
         # encoder features: npoints x batch x channel -> batch x channel x npoints
         enc_xyz, enc_features, enc_inds = self.run_encoder(point_clouds)
         enc_features = enc_features.permute(1, 2, 0)

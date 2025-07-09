@@ -131,7 +131,7 @@ def evaluate(
             'instruction_mask': batch_data_label['instruction_mask'],
             'qformer_input_ids': batch_data_label['qformer_input_ids'],
             'qformer_attention_mask': batch_data_label['qformer_attention_mask'],
-            'superpoints': batch_data_label['superpoints'],
+            'spts': batch_data_label['spts'],
         }
         outputs = model(model_input, is_eval=True, task_name='dense-cap')
 

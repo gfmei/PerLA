@@ -48,7 +48,7 @@ def evaluate(
             'point_clouds': batch_data_label['point_clouds'],
             'point_cloud_dims_min': batch_data_label['point_cloud_dims_min'],
             'point_cloud_dims_max': batch_data_label['point_cloud_dims_max'],
-            "spts": batch_data_label['superpoints'],
+            "spts": batch_data_label['spts'],
         }
         outputs = model(model_input, is_eval=True)
         

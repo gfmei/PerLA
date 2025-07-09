@@ -114,7 +114,7 @@ def evaluate(
             'qformer_attention_mask': batch_data_label['qformer_attention_mask'],
             'instruction': batch_data_label['instruction'],
             'instruction_mask': batch_data_label['instruction_mask'],
-            "spts": batch_data_label['superpoints'],
+            "spts": batch_data_label['spts'],
         }
         outputs = model(model_input, is_eval=True, task_name='chat')
 
