@@ -1,16 +1,11 @@
-import os
-
-import numpy as np
+import open3d as o3d
 import torch
-from hilbertcurve.hilbertcurve import HilbertCurve
 
-from libs.lib_spts import num_to_natural_numpy
-from libs.lib_vis import visualize_multiple_point_clouds, visualize_clusters, visualize_grouped_points
+from libs.lib_vis import visualize_clusters, visualize_grouped_points
 from libs.pc_utils import index_points, farthest_point_sample
 from libs.scannet200_constants import SCANNET_COLOR_MAP_200
 from models.common.hilbert_util import HilbertCurveBatch
 from models.common.serialization import divide_point_cloud_curve
-import open3d as o3d
 
 
 # # ------------------------------------------------------------------
@@ -57,10 +52,12 @@ def quantise_to_grid(xyz: torch.Tensor, bits: int = 10):
     xyz = xyz.float()
     mins = xyz.amin(dim=-2, keepdim=True)
     span = (xyz.amax(dim=-2, keepdim=True) - mins).clamp_min_(1e-9)
-    max_val = (1 << bits) - 1                       # 2**bits – 1
+    max_val = (1 << bits) - 1  # 2**bits – 1
     return ((xyz - mins) / span * max_val).round().long(), span, mins
 
-def dequantise_from_grid(quantized: torch.Tensor, mins: torch.Tensor, span: torch.Tensor, bits: int = 10) -> torch.Tensor:
+
+def dequantise_from_grid(quantized: torch.Tensor, mins: torch.Tensor, span: torch.Tensor,
+                         bits: int = 10) -> torch.Tensor:
     """
     Recover original xyz values from quantized coords using stored mins and span.
     """
@@ -108,32 +105,32 @@ def replicate_points_for_equal_splits(points, feats=None, k=6):
 
 
 def main():
-    scene = "scene0606_01"                     # ← change scan ID here
-    root   = "/data/disk1/data/scannet/scannet_llm"
+    scene = "scene0606_01"  # ← change scan ID here
+    root = "/data/disk1/data/scannet/scannet_llm"
 
-    xyzrgbn = np.load(f"{root}/{scene}_aligned_vert.npy")   # (N,6)
-    spt_np  = np.load(f"{root}/{scene}_spt.npy")            # (N,)
+    xyzrgbn = np.load(f"{root}/{scene}_aligned_vert.npy")  # (N,6)
+    spt_np = np.load(f"{root}/{scene}_spt.npy")  # (N,)
 
-    pts  = torch.from_numpy(xyzrgbn[:, :3]).cuda()          # xyz (N,3)
-    spts = torch.from_numpy(spt_np.astype(np.int64)).cuda() # labels (N,)
+    pts = torch.from_numpy(xyzrgbn[:, :3]).cuda()  # xyz (N,3)
+    spts = torch.from_numpy(spt_np.astype(np.int64)).cuda()  # labels (N,)
 
     # -------- queries via FPS ----------------------------------------
     M = 2048
     q_idx = farthest_point_sampling(pts, M)
-    Q_xyz = pts[q_idx]             # (M,3)
-    Q_lbl = spts[q_idx]            # (M,)
+    Q_xyz = pts[q_idx]  # (M,3)
+    Q_lbl = spts[q_idx]  # (M,)
 
     # -------- batch dims --------------------------------------------
-    P_xyz = pts.unsqueeze(0)       # (1,N,3)
-    L_p   = spts.unsqueeze(0)      # (1,N)
-    Q_xyz_b = Q_xyz.unsqueeze(0)   # (1,M,3)
-    L_q   = Q_lbl.unsqueeze(0)     # (1,M)
+    P_xyz = pts.unsqueeze(0)  # (1,N,3)
+    L_p = spts.unsqueeze(0)  # (1,N)
+    Q_xyz_b = Q_xyz.unsqueeze(0)  # (1,M,3)
+    L_q = Q_lbl.unsqueeze(0)  # (1,M)
 
     # -------- Hilbert k-NN ------------------------------------------
     hilbert = HilbertCurveBatch(p=10, n=3)
-    bits    = hilbert.p
+    bits = hilbert.p
 
-    P_int = quantise_to_grid(P_xyz, bits)      # integer coords for Hilbert
+    P_int = quantise_to_grid(P_xyz, bits)  # integer coords for Hilbert
     Q_int = quantise_to_grid(Q_xyz_b, bits)
 
     K = 16
@@ -146,16 +143,16 @@ def main():
 
     # -------- gather ORIGINAL xyz using indices ----------------------
     B, Mq, Kq = neigh_idx.shape
-    flat_idx = neigh_idx.view(-1)               # (M*K,)
-    gathered  = P_xyz[0].index_select(0, flat_idx)  # (M*K,3)
+    flat_idx = neigh_idx.view(-1)  # (M*K,)
+    gathered = P_xyz[0].index_select(0, flat_idx)  # (M*K,3)
     neigh_xyz = gathered.view(1, Mq, Kq, 3)[0].cpu()  # (M,K,3)
 
-    mask = same_mask[0].cpu().bool()            # (M,K)
+    mask = same_mask[0].cpu().bool()  # (M,K)
 
     # -------- build colourised neighbour cloud ----------------------
     pts_list, col_list = [], []
     for i in range(Mq):
-        valid = neigh_xyz[i][mask[i]]           # (#valid,3)
+        valid = neigh_xyz[i][mask[i]]  # (#valid,3)
         if not len(valid): continue
         col = np.array(SCANNET_COLOR_MAP_200[(i % 255) + 1]) / 255.0
         pts_list.append(valid)
@@ -180,6 +177,7 @@ if __name__ == '__main__':
     import os
     from libs.lib_spts import num_to_natural_numpy
     from libs.lib_vis import visualize_multiple_point_clouds
+
     hilbert_curve = HilbertCurveBatch(p=10, n=3)
     data_path = '/data/disk1/data/scannet/scannet_llm'
     scan_name = 'scene0606_01'

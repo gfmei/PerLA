@@ -11,14 +11,14 @@ python main.py \
     --detector perla \
     --captioner perla \
     --checkpoint_dir ./ckpts/opt-1.3b/perla-generalist \
-    --test_ckpt ckpts/opt-1.3b-reproduce/perla-scanqa-tuned/checkpoint_best.pth \
+    --test_ckpt ckpts/opt-1.3b/perla-scanqa-tuned/checkpoint.pth \
     --dataset unified_scanqa \
     --vocab facebook/opt-1.3b \
     --qformer_vocab bert-base-embedding \
     --dist_url tcp://localhost:29400 \
     --criterion 'CiDEr' \
     --freeze_detector --freeze_llm \
-    --batchsize_per_gpu 2 --ngpus 1 \
+    --batchsize_per_gpu 12 --ngpus 4 \
     --max_des_len 256 \
     --max_prompt 1 \
     --use_beam_search \

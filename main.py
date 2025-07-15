@@ -221,9 +221,13 @@ def main(local_rank, args):
     # testing phase
     if args.test_only:
         try:
-            checkpoint = torch.load(args.test_ckpt, map_location=torch.device("cpu"))
-            model.load_state_dict(checkpoint["model"], strict=False)
-        except:
+            ckpt = torch.load(args.test_ckpt, map_location="cpu", weights_only=True)
+            model.load_state_dict(ckpt.get("model", ckpt), strict=False)
+        except Exception as e:
+            ckpt = torch.load(args.test_ckpt, weights_only=True)  # <—  key line
+            # 2 If your checkpoint wraps weights in a dict, unwrap it
+            state_dict = ckpt.get("model", ckpt)  # handles both cases
+            model.load_state_dict(state_dict, strict=False)
             print('test the model from scratch...')
 
         # model_no_ddp = model.cuda()
