@@ -47,7 +47,10 @@ directory when changing the objective.
 Training reports the unweighted KL loss and the fraction of examples with
 represented referents. Compare baseline, baseline + KL, adaptive fusion, and
 adaptive fusion + KL under the same [evaluation protocol](ll3da_benchmark.md).
-ScanQA and ScanRefer benchmark improvements have not yet been measured.
+Full-validation ScanQA and ScanRefer benchmark improvements have not yet been
+measured. A completed [200-step ScanQA pilot](grounding_pilot_results.md) found
+CIDEr ×100 of 10.75 for baseline and 23.54 with KL on 128 validation questions
+with seed 0. This diagnostic does not establish full-benchmark performance.
 
 For a bounded ScanQA comparison, `scripts/run_grounding_pilot.py` accepts the
 usual `main.py` training arguments plus `--steps` and `--validation_samples`.
@@ -56,6 +59,10 @@ The runner fixes validation sampling, saves predictions before and after
 training, and records actual optimizer steps and GPU memory. Use
 `--validation_samples 0` for the full validation split; subset scores are
 diagnostics and are not comparable to published full-split results.
+
+Use `scripts/compare_grounding_pilots.py BASELINE_DIR KL_DIR --output REPORT.json`
+to verify matched settings and initial predictions, check actual optimizer
+steps, and compute the paired CIDEr difference and a question-bootstrap interval.
 
 Reference implementation: ReTok3D,
 `models/point_mllm/attention_grounding.py`. This PerLA implementation adapts its

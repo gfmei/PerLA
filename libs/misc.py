@@ -2,6 +2,7 @@
 import argparse
 import os
 import random
+import tempfile
 
 import torch
 import numpy as np
@@ -37,8 +38,21 @@ def save_checkpoint(
         "epoch": epoch,
         "args": args,
         "best_val_metrics": best_val_metrics,
+        "optimizer_steps": getattr(args, "optimizer_steps", 0),
+        "skipped_steps": getattr(args, "skipped_steps", 0),
     }
-    torch.save(sd, checkpoint_name)
+    # A time limit or node failure must not destroy the last complete epoch.
+    temporary_name = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=checkpoint_dir, prefix=".checkpoint-", delete=False) as target:
+            temporary_name = target.name
+            torch.save(sd, target)
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary_name, checkpoint_name)
+    finally:
+        if temporary_name is not None and os.path.exists(temporary_name):
+            os.unlink(temporary_name)
 
 
 def load_checkpoint(path):
@@ -153,6 +167,9 @@ def resume_if_possible(checkpoint_dir, model_no_ddp, optimizer, args=None):
     load_model_state(model_no_ddp, sd["model"],
                      require_detector=getattr(model_no_ddp, "freeze_detector", False), require_captioner=True)
     optimizer.load_state_dict(sd["optimizer"])
+    if args is not None:
+        args.optimizer_steps = sd.get("optimizer_steps", 0)
+        args.skipped_steps = sd.get("skipped_steps", 0)
     print(
         f"Loaded model and optimizer state at {epoch}. Loaded best val metrics so far."
     )

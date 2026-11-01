@@ -1,6 +1,8 @@
 # LL3DA comparison and accuracy experiments
 
-No benchmark scores have been measured for the corrected implementation yet.
+No full-validation benchmark scores have been measured for the corrected
+implementation yet. The completed [ScanQA grounding pilot](grounding_pilot_results.md)
+covers 128 validation questions after 200 training steps with seed 0.
 Passing regression tests verifies behavior, not ScanQA or ScanRefer accuracy.
 The current research objective is to improve PerLA itself with the
 [experimental fusion method](adaptive_fusion.md). Compare it with the corrected

@@ -116,6 +116,10 @@ Batched Hilbert key construction uses integer tensor operations on the input
 device, avoiding Python point loops and GPU-to-CPU transfers while preserving
 the scalar encoder's keys.
 
+The recorded [A100 fusion benchmark](grounding_pilot_results.md#gpu-fusion-benchmark)
+measured 25.57–26.97× faster fusion inference with exact feature parity. This
+measures the fusion module, not end-to-end generation speed.
+
 Surface normals follow the same geometric augmentation as the point
 coordinates, and colors remain aligned through cuboid cropping. Use the same
 preprocessing and augmentation settings for all ablation variants.

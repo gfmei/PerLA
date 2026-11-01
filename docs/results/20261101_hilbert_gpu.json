@@ -1,0 +1,28 @@
+{
+  "gpu": "NVIDIA A100-SXM-64GB",
+  "batch": 4,
+  "global_keys": 1024,
+  "local_keys": 6144,
+  "results": [
+    {
+      "fusion": "baseline",
+      "neighbors": "hilbert",
+      "milliseconds": {
+        "scalar": 349.062142544426,
+        "tensor": 13.651162036694586
+      },
+      "speedup": 25.570141326147933
+    },
+    {
+      "fusion": "instruction",
+      "neighbors": "geometry",
+      "milliseconds": {
+        "scalar": 347.64345560688525,
+        "tensor": 12.892058002762496
+      },
+      "speedup": 26.965706757787824
+    }
+  ],
+  "exact_feature_parity": true,
+  "scope": "Fusion inference module only; excludes detector, Q-Former and OPT."
+}

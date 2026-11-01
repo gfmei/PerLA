@@ -94,6 +94,10 @@ def make_args_parser(argv=None):
     ##### Training #####
     parser.add_argument("--start_epoch", default=-1, type=int)
     parser.add_argument("--max_epoch", default=1080, type=int)
+    parser.add_argument("--stop_epoch", default=None, type=int,
+                        help="Stop at this exclusive epoch while keeping the full max_epoch LR schedule")
+    parser.add_argument("--reseed_each_epoch", action="store_true",
+                        help="Make epoch sampling/dropout reproducible across checkpointed job stages")
     parser.add_argument("--start_eval_after", default=-1, type=int)
     parser.add_argument("--eval_every_iteration", default=4000, type=int)
     parser.add_argument("--seed", default=0, type=int)
@@ -130,6 +134,8 @@ def make_args_parser(argv=None):
 
     args = parser.parse_args(argv)
     args.use_height = not args.no_height
+    if args.stop_epoch is not None and not 0 < args.stop_epoch <= args.max_epoch:
+        parser.error("--stop_epoch must be in [1, max_epoch]")
     validate_grounding_settings(args.kl_attention_weight, args.kl_attention_smoothing)
     if args.kl_attention_loss and args.captioner is None:
         parser.error("--kl_attention_loss requires --captioner perla")

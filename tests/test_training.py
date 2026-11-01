@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 import torch
 import numpy as np
 
-from libs.misc import (load_model_state, resume_if_possible, save_checkpoint,
+from libs.misc import (load_checkpoint, load_model_state, resume_if_possible, save_checkpoint,
                        seed_everything, validate_model_configuration)
 from models.perla import engine
 
@@ -129,6 +129,49 @@ class TrainingRegressionTests(unittest.TestCase):
         self.assertEqual(model.training_modes, [])
         evaluator.assert_called_once()
         self.assertEqual(evaluator.call_args.args[1], 2)
+
+    def test_chunk_preserves_full_learning_rate_schedule(self):
+        model = TinyModel(auxiliary_losses=False)
+        args = training_args(max_epoch=4, stop_epoch=2, final_lr=0)
+        self.run_training(model, args)
+        expected = 1 - sum(engine.compute_learning_rate(args, epoch / 4) for epoch in range(2))
+        self.assertAlmostEqual(model.weight.item(), expected, places=6)
+        self.assertEqual(args.optimizer_steps, 2)
+
+    def test_chunk_resume_repeats_epoch_random_stream(self):
+        class RandomModel(TinyModel):
+            def forward(self, batch, is_eval=False):
+                return {'loss': self.weight * (torch.rand(()) + random.random() + np.random.rand())}
+
+        uninterrupted = RandomModel()
+        self.run_training(uninterrupted, training_args(max_epoch=4, reseed_each_epoch=True, seed=10))
+        chunked = RandomModel()
+        self.run_training(chunked, training_args(max_epoch=4, stop_epoch=2, reseed_each_epoch=True, seed=10))
+        self.run_training(chunked, training_args(start_epoch=2, max_epoch=4, reseed_each_epoch=True, seed=10))
+        torch.testing.assert_close(uninterrupted.weight, chunked.weight)
+
+    def test_final_periodic_evaluation_is_not_repeated(self):
+        evaluator = Mock(return_value={'CiDEr': 1.0})
+        self.run_training(TinyModel(), training_args(eval_every_iteration=1), evaluator=evaluator)
+        evaluator.assert_called_once()
+
+    def test_failed_checkpoint_write_preserves_previous_checkpoint(self):
+        model = TinyModel()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+        args = training_args(filter_name=None, optimizer_steps=7, skipped_steps=1)
+        with tempfile.TemporaryDirectory() as directory:
+            save_checkpoint(directory, model, optimizer, 0, args, {}, filename='checkpoint.pth')
+            with patch('torch.save', side_effect=OSError('disk full')):
+                with self.assertRaisesRegex(OSError, 'disk full'):
+                    save_checkpoint(directory, model, optimizer, 1, args, {}, filename='checkpoint.pth')
+            checkpoint = load_checkpoint(os.path.join(directory, 'checkpoint.pth'))
+            self.assertEqual(checkpoint['epoch'], 0)
+            self.assertEqual(checkpoint['optimizer_steps'], 7)
+            self.assertEqual(os.listdir(directory), ['checkpoint.pth'])
+            restored = training_args()
+            resume_if_possible(directory, model, optimizer, args=restored)
+            self.assertEqual(restored.optimizer_steps, 7)
+            self.assertEqual(restored.skipped_steps, 1)
 
     def test_detector_only_training(self):
         model = TinyModel(auxiliary_losses=False)

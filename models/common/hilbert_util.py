@@ -471,19 +471,6 @@ class HilbertCurveBatch:
         #    shape: (B, N)
         combined_dist = label_offset * labels_2d + dists_2d
 
-        # 3) Sort per batch (dim=1)
-        #    sorted_indices is shape (B, N), with the sorted order for each batch row
-        # sorted_combined_vals, sorted_indices = torch.sort(combined_dist, dim=1)
-
-        # 4) Use torch.gather to reorder the original data
-        #    Expand sorted_indices to gather the points on dim=1
-        # index_expanded = sorted_indices.unsqueeze(-1).expand(B, N, dims)
-        # sorted_points_3d = torch.gather(points_3d, dim=1, index=index_expanded)
-        #
-        # # Similarly gather labels and distances (both are shape (B, N))
-        # sorted_labels_2d = torch.gather(labels_2d, dim=1, index=sorted_indices)
-        # sorted_distances_2d = torch.gather(dists_2d, dim=1, index=sorted_indices)
-
         return combined_dist
 
     def distances_from_points_label_center_batch_torch(
@@ -527,73 +514,6 @@ class HilbertCurveBatch:
 
         combined = ctr_of_pt * label_offset + pt_dist  # (B,N)
         return combined
-
-    # def distances_from_points_label_center_batch_torch(
-    #         self,
-    #         points_3d: torch.Tensor,  # (B, N, d)
-    #         labels_2d: torch.Tensor,  # (B, N)
-    #         label_offset: int = None,
-    # ):
-    #     if points_3d.dim() != 3 or labels_2d.dim() != 2:
-    #         raise ValueError("points_3d (B,N,d) and labels_2d (B,N) required.")
-    #     if points_3d.shape[:2] != labels_2d.shape:
-    #         raise ValueError("points_3d and labels_2d mismatch in (B,N).")
-    #     B, N, d = points_3d.shape
-    #     if d != self.n:
-    #         raise ValueError(f"points_3d has dim {d}, Hilbert n = {self.n}.")
-    #
-    #     # ------------------------------------------------------------------
-    #     # 1) label centres (vectorised)
-    #     # ------------------------------------------------------------------
-    #     L = labels_2d.max().item() + 1  # total label count
-    #     centres_3d, counts = compute_label_centers_and_counts(
-    #         points_3d, labels_2d, L - 1)  # (B,L,d), (B,L)
-    #
-    #     # ------------------------------------------------------------------
-    #     # 2) ONE Hilbert pass for all points  -------------------------------
-    #     #    cat [points | centres]  ->  (B, N+L, d)
-    #     # ------------------------------------------------------------------
-    #     all_pts = torch.cat([points_3d, centres_3d], dim=1)  # (B, N+L, d)
-    #     all_dists = self.distances_from_points_batch(all_pts)  # (B, N+L)
-    #
-    #     # split back
-    #     pts_dist = all_dists[:, :N]  # (B, N)
-    #     ctr_dist = all_dists[:, N:]  # (B, L)
-    #
-    #     # mark missing labels (count==0) ⇒ push to the end
-    #     ctr_dist = ctr_dist.float()
-    #     ctr_dist[counts == 0] = 1e9
-    #
-    #     # ------------------------------------------------------------------
-    #     # 3) sort labels by centre distance → rank/block ID
-    #     # ------------------------------------------------------------------
-    #     _, sort_idx = torch.sort(ctr_dist, dim=1)  # (B, L)
-    #     rank = torch.zeros_like(sort_idx)
-    #     rank.scatter_(1, sort_idx, torch.arange(L, device=points_3d.device).expand(B, L))
-    #
-    #     # map each point’s label to its block ID
-    #     block_id = torch.gather(rank, 1, labels_2d)  # (B, N)
-    #
-    #     # ------------------------------------------------------------------
-    #     # 4) combine   (offset keeps label blocks disjoint)
-    #     # ------------------------------------------------------------------
-    #     if label_offset is None:
-    #         label_offset = (2 ** (self.p * self.n)) + 1  # > max Hilbert dist
-    #     comb = pts_dist + block_id * label_offset  # (B, N)
-    #
-    #     return comb  # or keep sorting/gather logic as before
-
-    # # Finally, sort points per-batch by combined_dist
-    # sorted_vals, sorted_indices = torch.sort(combined_dist_2d, dim=1)  # (B, N)
-    # # reorder points, labels, dists
-    # sorted_points_3d = torch.gather(
-    #     points_3d, dim=1,
-    #     index=sorted_indices.unsqueeze(-1).expand(B, N, d)
-    # )
-    # sorted_labels_2d = torch.gather(labels_2d, dim=1, index=sorted_indices)
-    # sorted_dists_2d = torch.gather(points_dist_2d, dim=1, index=sorted_indices)
-    #
-    # return sorted_points_3d, sorted_labels_2d, sorted_dists_2d, label_block_ids_2d
 
     # -----------------------------------------------------------------------
     # Approximate kNN with NO for-loop over queries

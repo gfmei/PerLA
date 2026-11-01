@@ -1,6 +1,5 @@
 from typing import Dict
 
-import numpy as np
 import torch
 import torch.nn.functional as nnf
 from torch import nn, Tensor
@@ -18,53 +17,6 @@ from models.perla.attention_grounding import (
     build_grounding_targets, cross_attention_kl, validate_grounding_settings,
 )
 from libs.box_util import box3d_iou_batch_tensor
-
-
-def save_point_cloud_to_ply(points, colors=None, filename='fps'):
-    """
-    Save a point cloud to a PLY file.
-
-    Args:
-        filename (str): The file path to save the PLY file.
-        points (numpy.ndarray): A (N, 3) array of XYZ coordinates.
-        colors (numpy.ndarray, optional): A (N, 3) array of RGB values.
-    """
-    num_points = points.shape[0]
-
-    # Define the PLY header
-    header = [
-        'ply',
-        'format ascii 1.0',
-        f'element vertex {num_points}',
-        'property float x',
-        'property float y',
-        'property float z'
-    ]
-
-    # Add color properties if colors are provided
-    if colors is not None:
-        header += [
-            'property uchar red',
-            'property uchar green',
-            'property uchar blue'
-        ]
-
-    header.append('end_header')
-
-    # Combine points and colors (if provided)
-    if colors is not None:
-        data = np.hstack([points, colors])
-    else:
-        data = points
-
-    # Save to PLY file
-    with open(filename, 'w') as ply_file:
-        # Write header
-        ply_file.write('\n'.join(header) + '\n')
-
-        # Write point data
-        for point in data:
-            ply_file.write(' '.join(map(str, point)) + '\n')
 
 
 def proposal_dimension_select(features: Tensor, indices: Tensor) -> Tensor:
@@ -264,7 +216,6 @@ class Captioner(nn.Module):
         self.qformer = InstructBlipQFormerModel.from_pretrained(
             args.qformer_vocab,
             config=qformer_config,
-            # use_safetensors=True
         )
         self.qformer_hidden_size = qformer_config.hidden_size
 
@@ -512,19 +463,6 @@ class Captioner(nn.Module):
             detector_output['kl_attention_loss'] = kl_loss
             detector_output['kl_attention_supervised_fraction'] = supervised_fraction
         return detector_output
-
-    # def loss_caption(self, logits: Tensor, target: Tensor, mask: Tensor) -> Tensor:
-    #     loss_per_word = nnf.cross_entropy(
-    #         logits.permute(0, 2, 1).contiguous(),
-    #         target,
-    #         reduction='none',
-    #     )
-    #     final_loss = torch.sum(loss_per_word * mask) / torch.sum(mask + 1e-6)
-    #     # parameter activation for multi-gpu training
-    #     for param in self.parameters():
-    #         if param.requires_grad:
-    #             final_loss += 0 * torch.sum(param.to(final_loss.dtype) ** 2)
-    #     return final_loss
 
     def predict_densecap(self, detector_output: Dict, inputs: Dict, task_name: str, max_gen_length: int = 64) -> Dict:
         # ---- necessary elements

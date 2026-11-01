@@ -358,8 +358,10 @@ def farthest_point_sample(xyz, n_point, is_center=False):
     if is_center:
         centroid = xyz.mean(1).view(B, 1, C)
         dist = torch.sum((xyz - centroid) ** 2, -1)
-        mask = dist < distance
-        distance[mask] = dist[mask]
+        # Boolean gathers have a data-dependent size and synchronize CUDA on
+        # every FPS iteration. A dense selection preserves the same distances
+        # (including the original NaN handling) without that synchronization.
+        distance = torch.where(dist < distance, dist, distance)
         farthest = torch.max(distance, -1)[1]
     else:
         farthest = torch.randint(0, N, (B,), dtype=torch.long).to(device)
@@ -367,8 +369,7 @@ def farthest_point_sample(xyz, n_point, is_center=False):
         centroids[:, i] = farthest
         centroid = xyz[batch_indices, farthest, :].view(B, 1, C)
         dist = torch.sum((xyz - centroid) ** 2, -1)
-        mask = dist < distance
-        distance[mask] = dist[mask]
+        distance = torch.where(dist < distance, dist, distance)
         farthest = torch.max(distance, -1)[1]
 
     return centroids
@@ -465,11 +466,11 @@ def query_ball_point(radius, nsample, xyz, new_xyz):
     group_idx = torch.arange(N, dtype=torch.long).to(device).view(1, 1, N).repeat([B, S, 1])
     sqrdists = torch.cdist(new_xyz, xyz)
     group_idx[sqrdists > radius ** 2] = N
-    group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
+    # Keep the lowest input indices, exactly as the full sort did. These are
+    # radius neighbors in input order, not the nearest points by distance.
+    group_idx = group_idx.topk(nsample, dim=-1, largest=False, sorted=True).values
     group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
-    mask = group_idx == N
-    group_idx[mask] = group_first[mask]
-    return group_idx
+    return torch.where(group_idx == N, group_first, group_idx)
 
 
 def sample_and_group(npoint, radius, nsample, xyz, points, returnfps=False):

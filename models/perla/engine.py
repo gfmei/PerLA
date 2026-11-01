@@ -9,9 +9,11 @@ from libs.dist import (
     is_distributed,
     is_primary,
     barrier,
-    all_reduce_average
+    all_reduce_average,
+    get_rank,
+    get_world_size,
 )
-from libs.misc import SmoothedValue, save_checkpoint
+from libs.misc import SmoothedValue, save_checkpoint, seed_everything
 
 
 class Logger:
@@ -82,7 +84,15 @@ def do_train(
 
     max_tolerant_nan = 4
     curr_nan_times = 0
-    for curr_epoch in range(args.start_epoch, args.max_epoch):
+    last_eval_iter = None
+    args.optimizer_steps = getattr(args, 'optimizer_steps', 0)
+    args.skipped_steps = getattr(args, 'skipped_steps', 0)
+    stop_epoch = getattr(args, 'stop_epoch', None)
+    stop_epoch = args.max_epoch if stop_epoch is None else min(stop_epoch, args.max_epoch)
+    for curr_epoch in range(args.start_epoch, stop_epoch):
+
+        if getattr(args, 'reseed_each_epoch', False):
+            seed_everything(args.seed + curr_epoch * get_world_size() + get_rank())
 
         if is_distributed():
             dataloaders["train_sampler"].set_epoch(curr_epoch)
@@ -120,6 +130,7 @@ def do_train(
                 if curr_nan_times < max_tolerant_nan:
                     logout("Loss in not finite. Skip this training step.")
                     curr_nan_times += 1
+                    args.skipped_steps += 1
                     continue
                 else:
                     logout("Loss in not finite. Terminate training.")
@@ -130,6 +141,7 @@ def do_train(
             if args.clip_gradient > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_gradient)
             optimizer.step()
+            args.optimizer_steps += 1
 
             # Regularization step
             if getattr(model_no_ddp.captioner, "reference_point", None):
@@ -216,6 +228,7 @@ def do_train(
                                 f"saved current best val checkpoint at {filename}; "
                                 f"{args.criterion} {eval_metrics[args.criterion]}"
                             )
+                    last_eval_iter = curr_iter
             except Exception as e:
                 print(f"Eval fails: Exception: {e}")
             # end of an iteration
@@ -234,6 +247,8 @@ def do_train(
     # end of training
     eval_metrics = {}
     model.eval()
+    if last_eval_iter == curr_iter:
+        return
     for test_loader in dataloaders['test']:
         task_metrics = test_loader.dataset.eval_func(
             args,
@@ -245,4 +260,12 @@ def do_train(
             curr_train_iter=curr_iter
         )
         eval_metrics.update(task_metrics)
+    if eval_metrics and (not best_val_metrics or
+                         best_val_metrics[args.criterion] < eval_metrics[args.criterion]):
+        best_val_metrics = eval_metrics
+        save_checkpoint(args.checkpoint_dir, model_no_ddp, optimizer, curr_epoch,
+                        args, best_val_metrics, filename="checkpoint_best.pth")
+        if curr_epoch >= args.start_epoch:
+            save_checkpoint(args.checkpoint_dir, model_no_ddp, optimizer, curr_epoch,
+                            args, best_val_metrics, filename="checkpoint.pth")
     return

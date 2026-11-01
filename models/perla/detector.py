@@ -8,7 +8,6 @@ import torch.nn as nn
 from models.common.config import ModelConfig
 from models.common.criterion import build_criterion
 from models.common.helpers import GenericMLP
-from models.common.hilbert_util import HilbertCurveBatch
 from models.common.position_embedding import PositionEmbeddingCoordsSine
 from models.common.transformer import (
     MaskedTransformerEncoder, TransformerDecoder,
