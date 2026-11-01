@@ -43,9 +43,10 @@ full-validation accuracy or an improvement over the published PerLA benchmark.
 [Pilot results and uncertainty](docs/grounding_pilot_results.md)
 
 **Full-training status, 2026-11-01:** two 24-epoch ScanQA schedules—baseline and
-baseline + KL—have been submitted with the optimized code. Four-GPU training,
-validation, and checkpoint checks passed for both. Full-validation results are
-pending. These runs start from the pretrained detector and language components
+baseline + KL—were submitted with the optimized code and are now **held before
+starting to conserve GPU resources**. Four-GPU training, validation, and
+checkpoint checks passed for both. Full-validation results remain pending.
+These runs start from the pretrained detector and language components
 with a fresh captioner; they do not include generalist pretraining.
 [Schedule and artifacts →](docs/full_scanqa_training.md)
 

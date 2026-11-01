@@ -1,5 +1,11 @@
 # Full ScanQA training
 
+**Status, 2026-11-01:** both full-training schedules are held before starting to
+conserve GPU resources. All 12 GPU stages and the final CPU comparison are on
+user hold; none of the full-training stages has consumed GPU time. The schedule
+below records the original plan. The completed short pilots and checks remain
+available; there are no active PerLA GPU allocations at this status update.
+
 Two complete ScanQA training schedules were submitted on 2026-11-01: baseline
 fusion, and the same model with KL attention grounding. Each uses all 25,563
 training questions and evaluates all 4,675 validation questions after every
@@ -87,6 +93,12 @@ The exact submission commands and dependencies are saved in
 `outputs/experiments/20261101-full-scanqa/jobs.json`.
 The GPU jobs were subsequently updated to `--cpus-per-task=16` at the user's
 request; the original commands and resource-update history are both retained.
+The later resource-conservation hold is recorded in `scheduling_updates`.
+`gpu_resource_review.json` in the same directory records allocated GPU time
+from Slurm: 1.63 GPU-hours across the day's completed, failed, and cancelled
+PerLA pilots, checks, and benchmarks, including 0.26 GPU-hours for failed or
+cancelled attempts. Held jobs allocate no GPUs. No automatic release is
+scheduled.
 
 ## Reproducibility and outputs
 
