@@ -1,10 +1,12 @@
 # Full ScanQA training
 
-**Status, 2026-11-01:** both full-training schedules are held before starting to
-conserve GPU resources. All 12 GPU stages and the final CPU comparison are on
-user hold; none of the full-training stages has consumed GPU time. The schedule
-below records the original plan. The completed short pilots and checks remain
-available; there are no active PerLA GPU allocations at this status update.
+**Status, 2026-11-01:** the baseline and KL full-training schedules have been
+released from a temporary resource-review hold. The experiment scope is limited
+to these two runs and their final CPU comparison. Both runs are needed for the
+matched full-validation accuracy comparison; the completed speed benchmarks,
+pilots, and correctness checks are reused. No additional variants, seeds, or
+repeat GPU benchmarks are planned. New GPU checks require a specific unresolved
+issue that existing results and CPU checks cannot answer.
 
 Two complete ScanQA training schedules were submitted on 2026-11-01: baseline
 fusion, and the same model with KL attention grounding. Each uses all 25,563
@@ -93,12 +95,12 @@ The exact submission commands and dependencies are saved in
 `outputs/experiments/20261101-full-scanqa/jobs.json`.
 The GPU jobs were subsequently updated to `--cpus-per-task=16` at the user's
 request; the original commands and resource-update history are both retained.
-The later resource-conservation hold is recorded in `scheduling_updates`.
+The temporary resource-conservation hold and subsequent release of the two
+necessary comparison runs are recorded in `scheduling_updates`.
 `gpu_resource_review.json` in the same directory records allocated GPU time
-from Slurm: 1.63 GPU-hours across the day's completed, failed, and cancelled
+from Slurm at the temporary hold: 1.63 GPU-hours across completed, failed, and cancelled
 PerLA pilots, checks, and benchmarks, including 0.26 GPU-hours for failed or
-cancelled attempts. Held jobs allocate no GPUs. No automatic release is
-scheduled.
+cancelled attempts. These are historical allocation totals before full training.
 
 ## Reproducibility and outputs
 
