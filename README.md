@@ -30,6 +30,8 @@ We welcome and encourage contributions to the PerLA project! If you'd like to co
 ## Usage
 An optional [instruction-conditioned fusion method](docs/adaptive_fusion.md) adds geometric neighbor reranking and learned local/global blending, with switches for controlled ablations. Accuracy improvements remain to be measured.
 
+[KL attention grounding](docs/attention_grounding.md) adds optional training supervision for Q-Former attention using annotated object regions.
+
 For accuracy experiments against LL3DA, see the [benchmark protocol and launch commands](docs/ll3da_benchmark.md).
 
 Our method builds upon a substantial amount of code from LL3DA, and we gratefully acknowledge the original authors for their valuable contributions.

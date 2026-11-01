@@ -42,6 +42,7 @@ class ScanNetBaseDataset(Dataset):
     ):
 
         self.dataset_config = dataset_config
+        self.kl_attention_loss = getattr(args, 'kl_attention_loss', False) and split_set == 'train'
         # assert split_set in ["train", "val"]
 
         root_dir = args.root_dir
@@ -94,7 +95,7 @@ class ScanNetBaseDataset(Dataset):
     def __len__(self):
         return len(self.scan_names)
 
-    def _get_scan_data(self, scan_name):
+    def _get_scan_data(self, scan_name, grounding_object_ids=None):
         mesh_vertices = np.load(os.path.join(self.data_path, scan_name) + "_aligned_vert.npy")
         instance_labels = np.load(
             os.path.join(self.data_path, scan_name) + "_ins_label.npy"
@@ -233,6 +234,13 @@ class ScanNetBaseDataset(Dataset):
         ret_dict["point_clouds"] = point_cloud.astype(np.float32)
         spts = spt_labels[:, None]
         ret_dict["spts"] = spts.astype(np.int64)
+        if self.kl_attention_loss:
+            # ScanNet instance labels are one-based; annotation IDs are zero-based.
+            object_ids_for_grounding = np.asarray(
+                [] if grounding_object_ids is None else grounding_object_ids, dtype=np.int64,
+            ).reshape(-1)
+            object_ids_for_grounding = object_ids_for_grounding[object_ids_for_grounding >= 0]
+            ret_dict['grounding_point_mask'] = np.isin(instance_labels, object_ids_for_grounding + 1)
         ret_dict["gt_box_corners"] = box_corners.astype(np.float32)
         ret_dict["gt_box_centers"] = box_centers.astype(np.float32)
         ret_dict["gt_box_centers_normalized"] = box_centers_normalized.astype(

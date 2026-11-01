@@ -99,7 +99,10 @@ class Dataset(ScanNetBaseDataset):
 
         scan_name = self.annotations[idx]['scene_id']
         task_name = self.annotations[idx]['task_name']
-        ret_dict = self._get_scan_data(scan_name)
+        ret_dict = self._get_scan_data(
+            scan_name, grounding_object_ids=[int(self.annotations[idx]['object_id'])]
+            if self.split == 'train' else None,
+        )
 
         if self.split == 'train':
             prompt = deepcopy(random.choice(TASK_PROPMT[task_name]))

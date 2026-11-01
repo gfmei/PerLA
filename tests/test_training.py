@@ -136,6 +136,26 @@ class TrainingRegressionTests(unittest.TestCase):
         self.run_training(model)
         self.assertAlmostEqual(model.weight.item(), 0.9, places=6)
 
+    def test_grounding_loss_is_logged_without_adding_it_twice(self):
+        class GroundedModel(TinyModel):
+            def forward(self, batch, is_eval=False):
+                outputs = super().forward(batch, is_eval)
+                outputs['kl_attention_loss'] = 4 * self.weight
+                outputs['kl_attention_supervised_fraction'] = self.weight.new_tensor(0.5)
+                outputs['loss'] = outputs['loss'] + 0.5 * outputs['kl_attention_loss']
+                return outputs
+
+        model = GroundedModel()
+        reduced = []
+        def record(values):
+            reduced.append(values.clone())
+            return values
+        self.run_training(model, training_args(kl_attention_loss=True, kl_attention_weight=0.5), reduce=record)
+        # Gradient: language 1 + local 2 + global 3 + weighted KL 2.
+        self.assertAlmostEqual(model.weight.item(), 0.2, places=6)
+        torch.testing.assert_close(reduced[0], torch.tensor([8., 2., 3., 4., 0.5]))
+        self.assertFalse(reduced[0].requires_grad)
+
     def test_auxiliary_loss_weights_control_training_gradients(self):
         for local_weight, global_weight, expected in ((0.1, 0.01, 0.877), (0, 0, 0.9)):
             with self.subTest(local=local_weight, global_=global_weight):

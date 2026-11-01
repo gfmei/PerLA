@@ -92,7 +92,9 @@ class Dataset(ScanNetBaseDataset):
 
         scan_name = self.annotations[idx]['scene_id']
         task_name = self.annotations[idx]['task_name']
-        ret_dict = self._get_scan_data(scan_name)
+        ret_dict = self._get_scan_data(
+            scan_name, grounding_object_ids=self.annotations[idx].get('object_ids', []),
+        )
 
         # load question and answer
         question = self.annotations[idx]['question'].lower()
@@ -128,7 +130,7 @@ class Dataset(ScanNetBaseDataset):
         click_query = np.zeros((self.max_prompts, 3))
         click_mask = np.zeros((self.max_prompts,))
 
-        if self.split == 'train' and random.random() < 0.25:
+        if self.split == 'train' and self.annotations[idx]['object_ids'] and random.random() < 0.25:
 
             target_obj_id = random.choice(self.annotations[idx]['object_ids'])
             try:

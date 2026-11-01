@@ -14,6 +14,9 @@ from transformers import (
 from models.common.position_embedding import PositionEmbeddingCoordsSine
 from models.perla.generation_utils import generation
 from models.perla.merger import LearnCut
+from models.perla.attention_grounding import (
+    build_grounding_targets, cross_attention_kl, validate_grounding_settings,
+)
 from libs.box_util import box3d_iou_batch_tensor
 
 
@@ -238,6 +241,10 @@ class Captioner(nn.Module):
         self.visual_nquery = 8
         self.nlatent_query = nlatent_query
         self.freeze_llm = args.freeze_llm
+        self.kl_attention_loss = getattr(args, 'kl_attention_loss', False)
+        self.kl_attention_weight = getattr(args, 'kl_attention_weight', 1.0)
+        self.kl_attention_smoothing = getattr(args, 'kl_attention_smoothing', 0.05)
+        validate_grounding_settings(self.kl_attention_weight, self.kl_attention_smoothing)
 
         ## initialize tokenizer for batch decoding
         self.tokenizer = AutoTokenizer.from_pretrained(args.vocab)
@@ -371,7 +378,8 @@ class Captioner(nn.Module):
                                   box_qmask: Tensor = None,
                                   click_query: Tensor = None,
                                   click_qmask: Tensor = None,
-                                  scene_features=None
+                                  scene_features=None,
+                                  return_grounding_loss=False,
                                   ):
 
         point_cloud_dims = [
@@ -402,17 +410,40 @@ class Captioner(nn.Module):
         # prepare qformer inputs: batch x ntoken x n_embd
         query_attention_mask = torch.cat((query_attention_mask, inputs['qformer_attention_mask']), dim=1)
 
+        grounding = None
+        if return_grounding_loss and self.training and getattr(self, 'kl_attention_loss', False):
+            if 'grounding_point_mask' not in inputs:
+                raise ValueError("KL attention requires grounding_point_mask from the training dataset")
+            # Truncation can remove the entire response. Such examples have no
+            # supervised language target and must not add a grounding target.
+            point_mask = inputs['grounding_point_mask'] & inputs['gradient_mask'].gt(0).any(-1)[:, None]
+            grounding = build_grounding_targets(
+                inputs['spts'], point_mask, detector_output['enc_spts'],
+                smoothing=self.kl_attention_smoothing,
+            )
+        compute_grounding = grounding is not None and bool(grounding[2].any())
         query_outputs = self.qformer(
             input_ids=inputs['qformer_input_ids'],
             attention_mask=query_attention_mask,
             query_embeds=query_tokens,
             encoder_hidden_states=encoder_hidden_states,
             use_cache=False,
+            output_attentions=compute_grounding,
+            return_dict=True,
         )
-        
+        kl_loss = encoder_hidden_states.new_zeros((), dtype=torch.float32)
+        supervised_fraction = kl_loss.detach()
+        if compute_grounding:
+            targets, valid_keys, supervised = grounding
+            kl_loss = cross_attention_kl(
+                query_outputs.cross_attentions, targets, valid_keys, self.nlatent_query,
+            )
+            supervised_fraction = supervised.float().mean()
         query_outputs = query_outputs[0][:, : self.nlatent_query, :]
         prefix_feature = self.qformer_to_language_projection(query_outputs)
 
+        if return_grounding_loss:
+            return prefix_feature, l_loss, g_loss, kl_loss, supervised_fraction
         return prefix_feature, l_loss, g_loss
     
     def forward(self, detector_output: dict, inputs: dict, is_eval: bool = False, task_name: str = 'qa') -> dict:
@@ -449,13 +480,14 @@ class Captioner(nn.Module):
         embedding_layer = self.transformer.get_input_embeddings()
 
         # ---- batch x ntoken x n_embd
-        prefix_tokens, l_loss, g_loss = self._get_instruction_response(
+        prefix_tokens, l_loss, g_loss, kl_loss, supervised_fraction = self._get_instruction_response(
             detector_output=detector_output,
             inputs=inputs,
             box_query=box_query,
             box_qmask=box_qmask,
             click_query=click_query,
-            click_qmask=click_qmask
+            click_qmask=click_qmask,
+            return_grounding_loss=True,
         )
         prefix_mask = torch.ones_like(prefix_tokens[..., 0])
         # ---- batch x (ntoken + nword) x n_embd
@@ -476,6 +508,10 @@ class Captioner(nn.Module):
         )
         detector_output['l_loss'] = l_loss
         detector_output['g_loss'] = g_loss
+        if getattr(self, 'kl_attention_loss', False):
+            detector_output['loss'] = detector_output['loss'] + self.kl_attention_weight * kl_loss
+            detector_output['kl_attention_loss'] = kl_loss
+            detector_output['kl_attention_supervised_fraction'] = supervised_fraction
         return detector_output
 
     # def loss_caption(self, logits: Tensor, target: Tensor, mask: Tensor) -> Tensor:

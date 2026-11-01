@@ -111,6 +111,22 @@ def validate_model_configuration(args, checkpoint):
                                  "To change architecture, warm-start in a fresh output directory.")
 
 
+def validate_grounding_configuration(args, checkpoint):
+    """Resume the same objective; warm-starts and inference remain unrestricted."""
+    saved = checkpoint.get('args')
+    saved = vars(saved) if isinstance(saved, argparse.Namespace) else (saved or {})
+    defaults = {'kl_attention_loss': False, 'kl_attention_weight': 1.0,
+                'kl_attention_smoothing': 0.05}
+    names = ['kl_attention_loss']
+    if getattr(args, 'kl_attention_loss', False):
+        names.extend(['kl_attention_weight', 'kl_attention_smoothing'])
+    for name in names:
+        expected = saved.get(name, defaults[name])
+        if getattr(args, name, defaults[name]) != expected:
+            raise ValueError(f"Checkpoint requires --{name} {expected}; "
+                             "warm-start in a fresh output directory to change the KL objective.")
+
+
 def resume_if_possible(checkpoint_dir, model_no_ddp, optimizer, args=None):
     """
     Resume if checkpoint is available.
@@ -129,6 +145,7 @@ def resume_if_possible(checkpoint_dir, model_no_ddp, optimizer, args=None):
     sd = load_checkpoint(last_checkpoint)
     if args is not None:
         validate_model_configuration(args, sd)
+        validate_grounding_configuration(args, sd)
     epoch = sd["epoch"]
     best_val_metrics = sd["best_val_metrics"]
     print(f"Found checkpoint at {epoch}. Resuming.")

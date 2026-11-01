@@ -74,6 +74,8 @@ def do_train(
     loss_avg = SmoothedValue(window_size=10)
     l_loss_avg = SmoothedValue(window_size=10)
     g_loss_avg = SmoothedValue(window_size=10)
+    kl_loss_avg = SmoothedValue(window_size=10)
+    kl_supervised_avg = SmoothedValue(window_size=10)
 
     model.train()
     barrier()
@@ -105,9 +107,14 @@ def do_train(
                     + getattr(args, 'global_loss_weight', 1.0) * g_loss)
             # DDP averages gradients during backward. Stack detached metrics in
             # separate storage and use one collective for logging/NaN checks.
-            loss_reduced, l_loss, g_loss = all_reduce_average(torch.stack([
+            metrics = [
                 loss.detach(), l_loss.detach(), g_loss.detach(),
-            ])).unbind()
+            ]
+            if getattr(args, 'kl_attention_loss', False):
+                metrics.extend([outputs['kl_attention_loss'].detach(),
+                                outputs['kl_attention_supervised_fraction'].detach()])
+            reduced = all_reduce_average(torch.stack(metrics)).unbind()
+            loss_reduced, l_loss, g_loss = reduced[:3]
 
             if not math.isfinite(loss_reduced.item()):
                 if curr_nan_times < max_tolerant_nan:
@@ -132,18 +139,24 @@ def do_train(
             loss_avg.update(loss_reduced.item())
             l_loss_avg.update(l_loss.item())
             g_loss_avg.update(g_loss.item())
+            if getattr(args, 'kl_attention_loss', False):
+                kl_loss_avg.update(reduced[3].item())
+                kl_supervised_avg.update(reduced[4].item())
 
             # logging
             if is_primary() and curr_iter % args.log_every == 0:
                 mem_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
                 eta_seconds = (max_iters - curr_iter) * time_delta.avg
                 eta_str = str(datetime.timedelta(seconds=int(eta_seconds)))
+                grounding_log = (f"KL {kl_loss_avg.avg:0.4f}; Grounded {kl_supervised_avg.avg:0.2%}; "
+                                 if getattr(args, 'kl_attention_loss', False) else "")
                 logout(
                     f"Epoch [{curr_epoch}/{args.max_epoch}]; "
                     f"Iter [{curr_iter}/{max_iters}]; "
                     f"Loss {loss_avg.avg:0.2f}; "
                     f"Local Loss {l_loss_avg.avg:0.2f}; "
                     f"Global Loss {g_loss_avg.avg:0.2f}; "
+                    f"{grounding_log}"
                     f"LR {curr_lr:0.2e}; Iter time {time_delta.avg:0.2f}; "
                     f"ETA {eta_str}; Mem {mem_mb:0.2f}MB"
                 )

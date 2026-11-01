@@ -14,6 +14,7 @@ sys.path.append(os.path.join(cwd, 'libs'))
 from datasets.dloader import build_dataset
 from models.perla.engine import do_train
 from models.perla.model_general import CaptionNet
+from models.perla.attention_grounding import validate_grounding_settings
 from libs.dist import init_distributed, is_distributed, get_rank
 from libs.misc import (load_checkpoint, load_model_state, resume_if_possible,
                        seed_everything, validate_model_configuration)
@@ -100,6 +101,10 @@ def make_args_parser():
                         help="Weight of the local auxiliary loss (0 disables its gradient)")
     parser.add_argument("--global_loss_weight", default=1.0, type=float,
                         help="Weight of the global auxiliary loss (0 disables its gradient)")
+    parser.add_argument("--kl_attention_loss", action="store_true",
+                        help="Supervise Q-Former spatial attention with annotated object regions")
+    parser.add_argument("--kl_attention_weight", default=1.0, type=float)
+    parser.add_argument("--kl_attention_smoothing", default=0.05, type=float)
 
     ##### Testing #####
     parser.add_argument("--test_only", default=False, action="store_true")
@@ -125,6 +130,9 @@ def make_args_parser():
 
     args = parser.parse_args()
     args.use_height = not args.no_height
+    validate_grounding_settings(args.kl_attention_weight, args.kl_attention_smoothing)
+    if args.kl_attention_loss and args.captioner is None:
+        parser.error("--kl_attention_loss requires --captioner perla")
 
     return args
 
