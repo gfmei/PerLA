@@ -8,8 +8,6 @@ Author: Charles R. Qi and Or Litany
 # Point cloud IO
 import numpy as np
 import torch
-# Mesh IO
-import trimesh
 from torch import nn
 
 
@@ -177,6 +175,8 @@ def write_bbox(scene_bbox, out_filename):
         3. Select Wireframe view.
     """
 
+    import trimesh
+
     def convert_box_to_trimesh_fmt(box):
         ctr = box[:3]
         lengths = box[3:]
@@ -206,6 +206,8 @@ def write_oriented_bbox(scene_bbox, out_filename, colors=None):
             heading angle of positive Y is 90 degrees.
         out_filename: (string) filename
     """
+
+    import trimesh
 
     def heading2rotmat(heading_angle):
         pass
@@ -260,6 +262,8 @@ def write_oriented_bbox_camera_coord(scene_bbox, out_filename):
         out_filename: (string) filename
     """
 
+    import trimesh
+
     def heading2rotmat(heading_angle):
         pass
         rotmat = np.zeros((3, 3))
@@ -299,6 +303,8 @@ def write_lines_as_cylinders(pcl, filename, rad=0.005, res=64):
         rad: radius for the cylinder
         res: number of sections used to create the cylinder
     """
+    import trimesh
+
     scene = trimesh.scene.Scene()
     for src, tgt in pcl:
         # compute line

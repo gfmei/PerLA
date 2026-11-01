@@ -103,9 +103,6 @@ def evaluate(
     for curr_iter, batch_data_label in enumerate(dataset_loader):
 
         curr_time = time.time()
-        for key in batch_data_label:
-            batch_data_label[key] = batch_data_label[key].to(net_device)
-
         model_input = {
             'point_clouds': batch_data_label['point_clouds'],
             'point_cloud_dims_min': batch_data_label['point_cloud_dims_min'],
@@ -116,14 +113,15 @@ def evaluate(
             'instruction_mask': batch_data_label['instruction_mask'],
             "spts": batch_data_label['spts'],
         }
+        model_input = {key: value.to(net_device) for key, value in model_input.items()}
         outputs = model(model_input, is_eval=True, task_name='chat')
 
         outputs = dict(
             output_ids=outputs["output_ids"],
+            scan_idx=batch_data_label['scan_idx'].to(net_device),
         )
 
         outputs = all_gather_dict(outputs)
-        batch_data_label = all_gather_dict(batch_data_label)
 
         output_ids = outputs["output_ids"]  # batch x max_length
         answers = tokenizer.batch_decode(
@@ -132,7 +130,7 @@ def evaluate(
             clean_up_tokenization_spaces=False
         )
 
-        sample_index = batch_data_label['scan_idx'].cpu().tolist()
+        sample_index = outputs['scan_idx'].cpu().tolist()
 
         for idx in range(output_ids.shape[0]):
             scene_id = scan_names[sample_index[idx]]
@@ -141,7 +139,6 @@ def evaluate(
             answer = ' '.join(filter(lambda w: w, answer.split(' ')))
             candidates[key] = [answer]
 
-        # Memory intensive as it gathers point cloud GT tensor across all ranks
         time_delta.update(time.time() - curr_time)
 
         if is_primary() and curr_iter % args.log_every == 0:

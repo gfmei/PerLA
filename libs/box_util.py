@@ -781,7 +781,7 @@ def box3d_iou_batch_tensor(corners1, corners2):
     xB = torch.min(x_max_1, x_max_2)
     yB = torch.min(y_max_1, y_max_2)
     zB = torch.min(z_max_1, z_max_2)
-    zeros = corners1.new_zeros(xA.shape).cuda()
+    zeros = corners1.new_zeros(xA.shape)
     inter_vol = torch.max((xB - xA), zeros) * torch.max((yB - yA), zeros) * torch.max((zB - zA), zeros)
     box_vol_1 = (x_max_1 - x_min_1) * (y_max_1 - y_min_1) * (z_max_1 - z_min_1)
     box_vol_2 = (x_max_2 - x_min_2) * (y_max_2 - y_min_2) * (z_max_2 - z_min_2)

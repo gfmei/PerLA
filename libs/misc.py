@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
+import argparse
 import os
 
 import torch
@@ -39,6 +40,27 @@ def save_checkpoint(
     torch.save(sd, checkpoint_name)
 
 
+def load_checkpoint(path):
+    """Load a trusted PerLA checkpoint, including CLI arguments and metric scalars."""
+    if hasattr(torch.serialization, "safe_globals"):
+        # CIDEr and ROUGE return NumPy scalars in existing training checkpoints.
+        numpy_core = getattr(np, "_core", None)
+        if numpy_core is None:
+            numpy_core = np.core
+        allowed_globals = [
+            argparse.Namespace, numpy_core.multiarray.scalar, np.dtype,
+            type(np.dtype(np.float32)), type(np.dtype(np.float64)),
+        ]
+        if numpy_core.multiarray.scalar.__module__ != "numpy.core.multiarray":
+            # NumPy 2 renamed the module; checkpoints from NumPy 1 use this name.
+            allowed_globals.append((numpy_core.multiarray.scalar, "numpy.core.multiarray.scalar"))
+        with torch.serialization.safe_globals(allowed_globals):
+            return torch.load(path, map_location="cpu", weights_only=True)
+    # Older PyTorch cannot allowlist Namespace in weights-only mode. Preserve
+    # its legacy loading behavior for trusted PerLA training checkpoints.
+    return torch.load(path, map_location="cpu", weights_only=False)
+
+
 def resume_if_possible(checkpoint_dir, model_no_ddp, optimizer):
     """
     Resume if checkpoint is available.
@@ -54,7 +76,7 @@ def resume_if_possible(checkpoint_dir, model_no_ddp, optimizer):
     if not os.path.isfile(last_checkpoint):
         return epoch, best_val_metrics
 
-    sd = torch.load(last_checkpoint, map_location=torch.device("cpu"))
+    sd = load_checkpoint(last_checkpoint)
     epoch = sd["epoch"]
     best_val_metrics = sd["best_val_metrics"]
     print(f"Found checkpoint at {epoch}. Resuming.")

@@ -1,5 +1,4 @@
 import argparse
-import importlib
 import os, sys
 
 import numpy as np
@@ -13,11 +12,11 @@ sys.path.append(os.path.join(cwd, 'datasets'))
 sys.path.append(os.path.join(cwd, 'models'))
 sys.path.append(os.path.join(cwd, 'libs'))
 
-from datasets.data_config import DatasetConfig
+from datasets.dloader import build_dataset
 from models.perla.engine import do_train
 from models.perla.model_general import CaptionNet
 from libs.dist import init_distributed, is_distributed, get_rank
-from libs.misc import my_worker_init_fn, resume_if_possible
+from libs.misc import load_checkpoint, resume_if_possible
 
 
 def make_args_parser():
@@ -122,74 +121,16 @@ def make_args_parser():
     return args
 
 
-def build_dataloader_func(args, dataset, split):
-    if is_distributed():
-        sampler = torch.utils.data.DistributedSampler(
-            dataset,
-            shuffle=(split == 'train')
-        )
-    else:
-        if split == "train":
-            sampler = torch.utils.data.RandomSampler(dataset)
-        else:
-            sampler = torch.utils.data.SequentialSampler(dataset)
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        sampler=sampler,
-        batch_size=args.batchsize_per_gpu,
-        num_workers=args.dataset_num_workers,
-        worker_init_fn=my_worker_init_fn,
-    )
-    return sampler, dataloader
-
-
-def build_dataset(args):
-    dataset_config = DatasetConfig(args)
-    datasets = {'train': None, 'test': []}
-
-    train_datasets = []
-    for dataset in args.dataset.split(','):
-        dataset_module = importlib.import_module(f'datasets.{dataset}')
-        train_datasets.append(
-            dataset_module.Dataset(
-                args,
-                dataset_config,
-                split_set="train",
-                use_color=args.use_color,
-                use_normal=args.use_normal,
-                use_multiview=args.use_multiview,
-                use_height=args.use_height,
-                augment=True
-            )
-        )
-        datasets['test'].append(
-            dataset_module.Dataset(
-                args,
-                dataset_config,
-                split_set="val",
-                use_color=args.use_color,
-                use_normal=args.use_normal,
-                use_multiview=args.use_multiview,
-                use_height=args.use_height,
-                augment=False
-            )
-        )
-    datasets['train'] = torch.utils.data.ConcatDataset(train_datasets)
-
-    train_sampler, train_loader = build_dataloader_func(args, datasets['train'], split='train')
-    dataloaders = {
-        'train': train_loader,
-        'test': [],
-        'train_sampler': train_sampler,
-    }
-    for dataset in datasets['test']:
-        _, test_loader = build_dataloader_func(args, dataset, split='test')
-        dataloaders['test'].append(test_loader)
-
-    return dataset_config, datasets, dataloaders
-
-
 def main(local_rank, args):
+    if args.test_only and not args.test_ckpt:
+        raise ValueError("Please specify a checkpoint using --test_ckpt for evaluation")
+    if args.checkpoint_dir is None:
+        if not args.test_ckpt:
+            raise ValueError("Please specify an output directory using --checkpoint_dir")
+        args.checkpoint_dir = os.path.dirname(args.test_ckpt) or "."
+        print(f'testing directory: {args.checkpoint_dir}')
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
+
     if args.ngpus > 1:
         init_distributed(
             local_rank,
@@ -203,32 +144,14 @@ def main(local_rank, args):
     np.random.seed(args.seed)
     torch.cuda.manual_seed_all(args.seed + get_rank())
 
-    if args.checkpoint_dir is not None:
-        pass
-    elif args.test_ckpt is not None:
-        args.checkpoint_dir = os.path.dirname(args.test_ckpt)
-        print(f'testing directory: {args.checkpoint_dir}')
-    else:
-        raise AssertionError(
-            'Either checkpoint_dir or test_ckpt should be presented!'
-        )
-    os.makedirs(args.checkpoint_dir, exist_ok=True)
-
     # build datasets and dataloaders
     dataset_config, datasets, dataloaders = build_dataset(args)
     model = CaptionNet(args, dataset_config, nlatent_query=args.nlatent_query)
 
     # testing phase
     if args.test_only:
-        try:
-            ckpt = torch.load(args.test_ckpt, map_location="cpu", weights_only=True)
-            model.load_state_dict(ckpt.get("model", ckpt), strict=False)
-        except Exception as e:
-            ckpt = torch.load(args.test_ckpt, weights_only=True)  # <—  key line
-            # 2 If your checkpoint wraps weights in a dict, unwrap it
-            state_dict = ckpt.get("model", ckpt)  # handles both cases
-            model.load_state_dict(state_dict, strict=False)
-            print('test the model from scratch...')
+        ckpt = load_checkpoint(args.test_ckpt)
+        model.load_state_dict(ckpt.get("model", ckpt), strict=False)
 
         # model_no_ddp = model.cuda()
         model = model.cuda(local_rank)
@@ -258,10 +181,11 @@ def main(local_rank, args):
         # whether or not use pretrained weights
         if args.pretrained_weights is not None:
             try:
-                checkpoint = torch.load(args.pretrained_weights, map_location=torch.device("cpu"))
-                model.load_state_dict(checkpoint['model'], strict=False)
+                checkpoint = load_checkpoint(args.pretrained_weights)
+                state_dict = checkpoint.get("model", checkpoint)
+                model.load_state_dict(state_dict, strict=False)
                 print('=' * 10, 'Loading Pre-trained Parameters', '=' * 10)
-                for name, param in checkpoint['model'].items():
+                for name, param in state_dict.items():
                     print(f'\t{name}: {param.shape}')
             except (RuntimeError, IOError) as e:
                 print(f"Warning: Failed to load pre-trained weights due to: {e}")
@@ -314,7 +238,8 @@ def main(local_rank, args):
             best_val_metrics,
         )
 
-    torch.distributed.destroy_process_group()
+    if is_distributed():
+        torch.distributed.destroy_process_group()
 
 
 def launch_distributed(args):

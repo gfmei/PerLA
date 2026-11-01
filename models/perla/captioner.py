@@ -290,9 +290,9 @@ class Captioner(nn.Module):
         }
         self.train()
 
-        # Initialize the reference point with the current model parameters
-        self.reference_point = {name: param.clone().detach() for name, param in self.named_parameters() if
-                                param.requires_grad}
+        # The optional regularizer is disabled by default. Allocate snapshots
+        # only when it is used, rather than duplicating all trainable weights.
+        self.reference_point = {}
 
     def loss_caption(self, logits: torch.Tensor, target: torch.Tensor, mask: torch.Tensor, reg=-1) -> torch.Tensor:
         """
@@ -322,6 +322,8 @@ class Captioner(nn.Module):
 
         # Mirror descent regularization
         if reg > 0:
+            if not self.reference_point:
+                self.update_reference_point()
             for name, param in self.named_parameters():
                 if param.requires_grad:
                     # Calculate the distance from the reference point
@@ -336,13 +338,23 @@ class Captioner(nn.Module):
         self.reference_point = {name: param.clone().detach() for name, param in self.named_parameters() if
                                 param.requires_grad}
 
+    def _prepare_scene_features(self, detector_output):
+        """Merge and project the scene once for all proposal prompts."""
+        merge_features, l_loss, g_loss = self.en_slic(
+            detector_output['enc_features'], detector_output['enc_xyz'],
+            detector_output['l_enc_feats'], detector_output['l_enc_xyz'],
+            detector_output['enc_spts'], detector_output['l_enc_spts'],
+        )
+        return self.encoder_to_qformer_projection(merge_features), l_loss, g_loss
+
     def _get_instruction_response(self,
                                   detector_output: dict,
                                   inputs: dict,
                                   box_query: Tensor = None,
                                   box_qmask: Tensor = None,
                                   click_query: Tensor = None,
-                                  click_qmask: Tensor = None
+                                  click_qmask: Tensor = None,
+                                  scene_features=None
                                   ):
 
         point_cloud_dims = [
@@ -351,14 +363,9 @@ class Captioner(nn.Module):
         ]
         net_device = inputs["point_clouds"].device
         batch_size = inputs["point_clouds"].shape[0]
-        encoder_hidden_states = detector_output['enc_features']
-        l_enc_xyz = detector_output['l_enc_xyz']
-        l_enc_feats = detector_output['l_enc_feats']
-        enc_xyz = detector_output['enc_xyz']
-        sp_spts = detector_output['enc_spts']
-        l_spt_list = detector_output['l_enc_spts']
-        merge_features = encoder_hidden_states
-        merge_features, l_loss, g_loss = self.en_slic(merge_features, enc_xyz, l_enc_feats, l_enc_xyz, sp_spts, l_spt_list)
+        if scene_features is None:
+            scene_features = self._prepare_scene_features(detector_output)
+        encoder_hidden_states, l_loss, g_loss = scene_features
 
         # prompt encoding
         prompt_feature, prompt_mask = self.prompt_encoder(
@@ -382,7 +389,8 @@ class Captioner(nn.Module):
             input_ids=inputs['qformer_input_ids'],
             attention_mask=query_attention_mask,
             query_embeds=query_tokens,
-            encoder_hidden_states=self.encoder_to_qformer_projection(merge_features),
+            encoder_hidden_states=encoder_hidden_states,
+            use_cache=False,
         )
         
         query_outputs = query_outputs[0][:, : self.nlatent_query, :]
@@ -441,6 +449,7 @@ class Captioner(nn.Module):
         outputs = self.transformer(
             inputs_embeds=inputs_embeds.to(self.dtype),
             attention_mask=attention_mask.to(self.dtype),
+            use_cache=False,
         )
 
         detector_output['loss'] += self.loss_caption(
@@ -471,8 +480,17 @@ class Captioner(nn.Module):
         net_device = next(self.parameters()).device
         batch_size, nproposals, _, _ = detector_output['box_corners'].shape
         # ---- to store llm outputs
-        output_ids = torch.ones(batch_size, nproposals, max_gen_length).long().to(net_device)
-        output_ids = output_ids * self.tokenizer.eos_token_id
+        output_ids = torch.full(
+            (batch_size, nproposals, max_gen_length), self.tokenizer.eos_token_id,
+            dtype=torch.long, device=net_device,
+        )
+        sem_cls_logits = detector_output["sem_cls_logits"]
+        objectness_mask = sem_cls_logits.argmax(-1) != (sem_cls_logits.shape[-1] - 1)
+        if not objectness_mask.any():
+            detector_output['output_ids'] = output_ids
+            detector_output['l_loss'] = sem_cls_logits.new_zeros(())
+            detector_output['g_loss'] = sem_cls_logits.new_zeros(())
+            return detector_output
         # ---- llm input preparation
         instruction = inputs['instruction'][0]  # ntoken
         instruction_mask = inputs['instruction_mask'][0]  # ntoken
@@ -483,6 +501,7 @@ class Captioner(nn.Module):
         prefix_tokens = []
         l_loss = 0.0
         g_loss = 0.0
+        scene_features = self._prepare_scene_features(detector_output)
         for proposal_id in range(nproposals):
             box_query = detector_output['box_corners'][:, [proposal_id]]  # batch x 1 x 8 x 3
 
@@ -495,6 +514,7 @@ class Captioner(nn.Module):
                 inputs=inputs,
                 box_query=box_query,  # batch x 1 x 8 x 3
                 click_query=click_query,
+                scene_features=scene_features,
             )
             l_loss += l_loss_i
             g_loss += g_loss_i
@@ -502,10 +522,6 @@ class Captioner(nn.Module):
             prefix_tokens.append(instruct_prefix_feature.unsqueeze(1))
         # batch x nproposal x 1 x n_embd
         prefix_tokens = torch.cat(prefix_tokens, dim=1).to(self.dtype)
-
-        ## filter and rank the queries
-        sem_cls_logits = detector_output["sem_cls_logits"]
-        objectness_mask = sem_cls_logits.argmax(-1) != (sem_cls_logits.shape[-1] - 1)
 
         ## limit the proposals for generating captions
         candidate_prefix = prefix_tokens[objectness_mask].to(self.dtype)

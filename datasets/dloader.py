@@ -10,7 +10,6 @@ sys.path.append(os.path.join(cwd, 'libs'))
 sys.path.append(os.path.join(cwd, 'datasets'))
 
 from libs.dist import is_distributed
-from datasets.data_config import DatasetConfig
 from libs.misc import my_worker_init_fn
 
 
@@ -36,24 +35,27 @@ def build_dataloader_func(args, dataset, split):
 
 
 def build_dataset(args):
+    from datasets.data_config import DatasetConfig
+
     dataset_config = DatasetConfig(args)
     datasets = {'train': None, 'test': []}
 
     train_datasets = []
     for dataset in args.dataset.split(','):
         dataset_module = importlib.import_module(f'datasets.{dataset}')
-        train_datasets.append(
-            dataset_module.Dataset(
-                args,
-                dataset_config,
-                split_set="train",
-                use_color=args.use_color,
-                use_normal=args.use_normal,
-                use_multiview=args.use_multiview,
-                use_height=args.use_height,
-                augment=True
+        if not args.test_only:
+            train_datasets.append(
+                dataset_module.Dataset(
+                    args,
+                    dataset_config,
+                    split_set="train",
+                    use_color=args.use_color,
+                    use_normal=args.use_normal,
+                    use_multiview=args.use_multiview,
+                    use_height=args.use_height,
+                    augment=True
+                )
             )
-        )
         datasets['test'].append(
             dataset_module.Dataset(
                 args,
@@ -66,9 +68,11 @@ def build_dataset(args):
                 augment=False
             )
         )
-    datasets['train'] = torch.utils.data.ConcatDataset(train_datasets)
+    train_sampler, train_loader = None, None
+    if not args.test_only:
+        datasets['train'] = torch.utils.data.ConcatDataset(train_datasets)
+        train_sampler, train_loader = build_dataloader_func(args, datasets['train'], split='train')
 
-    train_sampler, train_loader = build_dataloader_func(args, datasets['train'], split='train')
     dataloaders = {
         'train': train_loader,
         'test': [],

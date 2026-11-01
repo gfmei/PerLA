@@ -1,6 +1,5 @@
 import importlib
 
-import torch
 from torch import nn
 
 
@@ -8,7 +7,7 @@ class CaptionNet(nn.Module):
 
     def train(self, mode: bool = True):
         super().train(mode)
-        if self.freeze_detector is True:
+        if self.freeze_detector is True and self.detector is not None:
             self.detector.eval()
             for param in self.detector.parameters():
                 param.requires_grad = False
@@ -24,6 +23,7 @@ class CaptionNet(nn.Module):
         super(CaptionNet, self).__init__()
 
         self.freeze_detector = args.freeze_detector
+        self.n_splits = args.n_splits
         self.detector = None
         self.captioner = None
 
@@ -41,9 +41,12 @@ class CaptionNet(nn.Module):
 
         self.train()
 
-    def forward(self, batch_data_label: dict, is_eval: bool = False, task_name: str = None, n_splits=4) -> dict:
+    def forward(self, batch_data_label: dict, is_eval: bool = False, task_name: str = None, n_splits=None) -> dict:
 
-        outputs = {'loss': torch.zeros(1)[0].cuda()}
+        if n_splits is None:
+            n_splits = self.n_splits
+        zero_loss = batch_data_label['point_clouds'].new_zeros(())
+        outputs = {'loss': zero_loss}
 
         if self.detector is not None:
             if self.freeze_detector is True:
@@ -52,7 +55,7 @@ class CaptionNet(nn.Module):
                 outputs = self.detector(batch_data_label, n_splits=n_splits, is_eval=is_eval)
 
         if self.freeze_detector is True:
-            outputs['loss'] = torch.zeros(1)[0].cuda()
+            outputs['loss'] = zero_loss
 
         if self.captioner is not None:
             outputs = self.captioner(

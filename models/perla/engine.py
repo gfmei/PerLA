@@ -65,7 +65,8 @@ def do_train(
         logout(f"call with args: {args}")
         logout(f"{model}")
 
-    curr_iter = args.start_epoch * len(dataloaders['train'])
+    curr_iter = args.start_epoch * len(dataloaders['train']) - 1
+    curr_epoch = args.start_epoch - 1
     max_iters = args.max_epoch * len(dataloaders['train'])
     net_device = next(model.parameters()).device
 
@@ -79,8 +80,6 @@ def do_train(
 
     max_tolerant_nan = 4
     curr_nan_times = 0
-    if args.start_epoch >= args.max_epoch - 1:
-        args.start_epoch = 0
     for curr_epoch in range(args.start_epoch, args.max_epoch):
 
         if is_distributed():
@@ -99,12 +98,16 @@ def do_train(
             optimizer.zero_grad()
 
             outputs = model(batch_data_label, is_eval=False)
-            loss = outputs['loss'] + outputs['l_loss'] + outputs['g_loss']
-            loss = all_reduce_average(loss)
-            l_loss = all_reduce_average(outputs['l_loss'])
-            g_loss = all_reduce_average(outputs['g_loss'])
+            l_loss = outputs.get('l_loss', outputs['loss'].new_zeros(()))
+            g_loss = outputs.get('g_loss', outputs['loss'].new_zeros(()))
+            loss = outputs['loss'] + l_loss + g_loss
+            # DDP averages gradients during backward. Stack detached metrics in
+            # separate storage and use one collective for logging/NaN checks.
+            loss_reduced, l_loss, g_loss = all_reduce_average(torch.stack([
+                loss.detach(), l_loss.detach(), g_loss.detach(),
+            ])).unbind()
 
-            if not math.isfinite(loss.item()):
+            if not math.isfinite(loss_reduced.item()):
                 if curr_nan_times < max_tolerant_nan:
                     logout("Loss in not finite. Skip this training step.")
                     curr_nan_times += 1
@@ -120,16 +123,11 @@ def do_train(
             optimizer.step()
 
             # Regularization step
-            if hasattr(model, "captioner"):  # Check if model has 'captioner' directly
-                model.captioner.update_reference_point()
-            elif hasattr(model, "module") and hasattr(model.module, "captioner"):
-                # Check if model is wrapped inside DataParallel or DistributedDataParallel
-                model.module.captioner.update_reference_point()
-            else:
-                raise AttributeError("Neither `model` nor `model.module` contains `captioner`")
+            if getattr(model_no_ddp.captioner, "reference_point", None):
+                model_no_ddp.captioner.update_reference_point()
 
             time_delta.update(time.time() - curr_time)
-            loss_avg.update(loss.item())
+            loss_avg.update(loss_reduced.item())
             l_loss_avg.update(l_loss.item())
             g_loss_avg.update(g_loss.item())
 
@@ -168,18 +166,20 @@ def do_train(
 
                     eval_metrics = {}
                     model.eval()
-                    for test_loader in dataloaders['test']:
-                        task_metrics = test_loader.dataset.eval_func(
-                            args,
-                            curr_epoch,
-                            model,
-                            dataset_config,
-                            test_loader,
-                            logout,
-                            curr_train_iter=curr_iter
-                        )
-                        eval_metrics.update(task_metrics)
-                    model.train()
+                    try:
+                        for test_loader in dataloaders['test']:
+                            task_metrics = test_loader.dataset.eval_func(
+                                args,
+                                curr_epoch,
+                                model,
+                                dataset_config,
+                                test_loader,
+                                logout,
+                                curr_train_iter=curr_iter
+                            )
+                            eval_metrics.update(task_metrics)
+                    finally:
+                        model.train()
 
                     if not best_val_metrics or (
                             best_val_metrics[args.criterion] < eval_metrics[args.criterion]
