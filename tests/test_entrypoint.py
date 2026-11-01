@@ -90,6 +90,36 @@ class EntrypointRegressionTests(unittest.TestCase):
         self.assertEqual(args.checkpoint_dir, ".")
         mkdir.assert_called_once_with(".", exist_ok=True)
 
+    def test_missing_pretrained_weights_fail_before_gpu_or_dataset_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = argparse.Namespace(
+                test_only=False, checkpoint_dir=directory, pretrained_weights=os.path.join(directory, "missing.pth"),
+            )
+            with patch("torch.cuda.set_device") as set_device, patch.object(self.main, "build_dataset") as build:
+                with self.assertRaisesRegex(FileNotFoundError, "Pretrained checkpoint"):
+                    self.main.main(0, args)
+                set_device.assert_not_called()
+                build.assert_not_called()
+
+    def test_freezing_uninitialized_detector_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = argparse.Namespace(
+                test_only=False, checkpoint_dir=directory, pretrained_weights=None,
+                freeze_detector=True, detector="perla",
+            )
+            with self.assertRaisesRegex(ValueError, "--freeze_detector requires"):
+                self.main.main(0, args)
+
+    def test_resume_does_not_require_original_pretrained_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            torch.save({}, os.path.join(directory, "checkpoint.pth"))
+            args = argparse.Namespace(test_only=False, checkpoint_dir=directory, ngpus=1, seed=0,
+                                      pretrained_weights="missing.pth")
+            with patch("torch.cuda.set_device"), \
+                    patch.object(self.main, "build_dataset", side_effect=RuntimeError("resume accepted")):
+                with self.assertRaisesRegex(RuntimeError, "resume accepted"):
+                    self.main.main(0, args)
+
 
 class ModelConfigurationTests(unittest.TestCase):
     def test_configured_partition_count_reaches_detector(self):

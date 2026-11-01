@@ -279,7 +279,14 @@ class Captioner(nn.Module):
         self.qformer_to_language_projection = nn.Linear(self.qformer_hidden_size, self.n_embd)
 
         self.en_slic = LearnCut(self.encoder_hidden_size, self.encoder_hidden_size,
-                                args.n_neighs, n_clus=args.n_clus, n_split=args.n_splits, radius=1.5, tau=1e-1)
+                                args.n_neighs, n_clus=args.n_clus, n_split=args.n_splits, radius=1.5, tau=1e-1,
+                                fusion_method=getattr(args, 'fusion_method', 'baseline'),
+                                neighbor_selection=getattr(args, 'neighbor_selection', 'hilbert'))
+        if self.en_slic.fusion_method == 'instruction':
+            self.instruction_to_scene = nn.Sequential(
+                nn.LayerNorm(self.qformer_hidden_size),
+                nn.Linear(self.qformer_hidden_size, self.encoder_hidden_size),
+            )
 
         self.max_gen_per_iter = 8
         # ---- super parameters for evaluation
@@ -338,12 +345,21 @@ class Captioner(nn.Module):
         self.reference_point = {name: param.clone().detach() for name, param in self.named_parameters() if
                                 param.requires_grad}
 
-    def _prepare_scene_features(self, detector_output):
-        """Merge and project the scene once for all proposal prompts."""
+    def _prepare_scene_features(self, detector_output, inputs=None):
+        """Merge once per scene/instruction; reuse across object proposals."""
+        instruction_context = None
+        if hasattr(self, 'instruction_to_scene'):
+            if inputs is None:
+                raise ValueError("Instruction fusion requires model inputs")
+            embeddings = self.qformer.get_input_embeddings()(inputs['qformer_input_ids'])
+            mask = inputs['qformer_attention_mask'].unsqueeze(-1).to(embeddings.dtype)
+            pooled = (embeddings * mask).sum(1) / mask.sum(1).clamp_min(1)
+            instruction_context = self.instruction_to_scene(pooled)
         merge_features, l_loss, g_loss = self.en_slic(
             detector_output['enc_features'], detector_output['enc_xyz'],
             detector_output['l_enc_feats'], detector_output['l_enc_xyz'],
             detector_output['enc_spts'], detector_output['l_enc_spts'],
+            instruction_context=instruction_context,
         )
         return self.encoder_to_qformer_projection(merge_features), l_loss, g_loss
 
@@ -364,7 +380,7 @@ class Captioner(nn.Module):
         net_device = inputs["point_clouds"].device
         batch_size = inputs["point_clouds"].shape[0]
         if scene_features is None:
-            scene_features = self._prepare_scene_features(detector_output)
+            scene_features = self._prepare_scene_features(detector_output, inputs)
         encoder_hidden_states, l_loss, g_loss = scene_features
 
         # prompt encoding
@@ -452,7 +468,7 @@ class Captioner(nn.Module):
             use_cache=False,
         )
 
-        detector_output['loss'] += self.loss_caption(
+        detector_output['loss'] = detector_output['loss'] + self.loss_caption(
             logits=outputs.logits[:, prefix_tokens.shape[1] - 1: -1],
             target=input_ids,
             mask=gradient_mask.to(self.dtype),
@@ -501,7 +517,7 @@ class Captioner(nn.Module):
         prefix_tokens = []
         l_loss = 0.0
         g_loss = 0.0
-        scene_features = self._prepare_scene_features(detector_output)
+        scene_features = self._prepare_scene_features(detector_output, inputs)
         for proposal_id in range(nproposals):
             box_query = detector_output['box_corners'][:, [proposal_id]]  # batch x 1 x 8 x 3
 

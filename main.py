@@ -1,7 +1,6 @@
 import argparse
 import os, sys
 
-import numpy as np
 import torch
 from torch.multiprocessing import set_start_method
 
@@ -16,7 +15,8 @@ from datasets.dloader import build_dataset
 from models.perla.engine import do_train
 from models.perla.model_general import CaptionNet
 from libs.dist import init_distributed, is_distributed, get_rank
-from libs.misc import load_checkpoint, resume_if_possible
+from libs.misc import (load_checkpoint, load_model_state, resume_if_possible,
+                       seed_everything, validate_model_configuration)
 
 
 def make_args_parser():
@@ -48,6 +48,10 @@ def make_args_parser():
     parser.add_argument("--n_splits", default=4, type=int)
     parser.add_argument("--n_clus", default=128, type=int)
     parser.add_argument("--nlatent_query", default=32, type=int)
+    parser.add_argument("--fusion_method", choices=("baseline", "gated", "instruction"), default="baseline",
+                        help="Local/global fusion: original, adaptive gate, or instruction-conditioned gate")
+    parser.add_argument("--neighbor_selection", choices=("hilbert", "geometry"), default="hilbert",
+                        help="Hilbert neighbors or geometric reranking with spatial attention bias")
 
     parser.add_argument("--detector", default="perla", help="folder of the detector")
     parser.add_argument("--captioner", default=None, type=str, help="folder of the captioner")
@@ -92,6 +96,10 @@ def make_args_parser():
     parser.add_argument("--start_eval_after", default=-1, type=int)
     parser.add_argument("--eval_every_iteration", default=4000, type=int)
     parser.add_argument("--seed", default=0, type=int)
+    parser.add_argument("--local_loss_weight", default=1.0, type=float,
+                        help="Weight of the local auxiliary loss (0 disables its gradient)")
+    parser.add_argument("--global_loss_weight", default=1.0, type=float,
+                        help="Weight of the global auxiliary loss (0 disables its gradient)")
 
     ##### Testing #####
     parser.add_argument("--test_only", default=False, action="store_true")
@@ -131,6 +139,14 @@ def main(local_rank, args):
         print(f'testing directory: {args.checkpoint_dir}')
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
+    resuming = os.path.isfile(os.path.join(args.checkpoint_dir, "checkpoint.pth"))
+    if not args.test_only and not resuming:
+        if args.pretrained_weights is not None:
+            if not os.path.isfile(args.pretrained_weights):
+                raise FileNotFoundError(f"Pretrained checkpoint does not exist: {args.pretrained_weights}")
+        elif args.freeze_detector and args.detector is not None:
+            raise ValueError("--freeze_detector requires --pretrained_weights or a resumable checkpoint")
+
     if args.ngpus > 1:
         init_distributed(
             local_rank,
@@ -141,8 +157,7 @@ def main(local_rank, args):
         )
 
     torch.cuda.set_device(local_rank)
-    np.random.seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed + get_rank())
+    seed_everything(args.seed + get_rank())
 
     # build datasets and dataloaders
     dataset_config, datasets, dataloaders = build_dataset(args)
@@ -151,7 +166,9 @@ def main(local_rank, args):
     # testing phase
     if args.test_only:
         ckpt = load_checkpoint(args.test_ckpt)
-        model.load_state_dict(ckpt.get("model", ckpt), strict=False)
+        validate_model_configuration(args, ckpt)
+        load_model_state(model, ckpt.get("model", ckpt),
+                         require_detector=getattr(args, "freeze_detector", False), require_captioner=True)
 
         # model_no_ddp = model.cuda()
         model = model.cuda(local_rank)
@@ -179,17 +196,12 @@ def main(local_rank, args):
         ), "Please specify a checkpoint dir using --checkpoint_dir"
         os.makedirs(args.checkpoint_dir, exist_ok=True)
         # whether or not use pretrained weights
-        if args.pretrained_weights is not None:
-            try:
-                checkpoint = load_checkpoint(args.pretrained_weights)
-                state_dict = checkpoint.get("model", checkpoint)
-                model.load_state_dict(state_dict, strict=False)
-                print('=' * 10, 'Loading Pre-trained Parameters', '=' * 10)
-                for name, param in state_dict.items():
-                    print(f'\t{name}: {param.shape}')
-            except (RuntimeError, IOError) as e:
-                print(f"Warning: Failed to load pre-trained weights due to: {e}")
-                print("Starting training from scratch...")
+        if resuming:
+            print("Resuming model and optimizer from the output directory checkpoint")
+        elif args.pretrained_weights is not None:
+            checkpoint = load_checkpoint(args.pretrained_weights)
+            load_model_state(model, checkpoint.get("model", checkpoint),
+                             require_detector=args.freeze_detector)
         else:
             print("No pre-trained weights provided. Starting training from scratch...")
 
@@ -199,7 +211,8 @@ def main(local_rank, args):
         if is_distributed():
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[local_rank]
+                # Box/click prompt branches are optional and differ by task.
+                model, device_ids=[local_rank], find_unused_parameters=True
             )
 
         if args.optimizer == 'AdamW':
@@ -225,7 +238,7 @@ def main(local_rank, args):
                 print('\t', name, param.shape)
 
         loaded_epoch, best_val_metrics = resume_if_possible(
-            args.checkpoint_dir, model_no_ddp, optimizer
+            args.checkpoint_dir, model_no_ddp, optimizer, args=args
         )
         args.start_epoch = loaded_epoch + 1
         do_train(

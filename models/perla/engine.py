@@ -100,7 +100,9 @@ def do_train(
             outputs = model(batch_data_label, is_eval=False)
             l_loss = outputs.get('l_loss', outputs['loss'].new_zeros(()))
             g_loss = outputs.get('g_loss', outputs['loss'].new_zeros(()))
-            loss = outputs['loss'] + l_loss + g_loss
+            loss = (outputs['loss']
+                    + getattr(args, 'local_loss_weight', 1.0) * l_loss
+                    + getattr(args, 'global_loss_weight', 1.0) * g_loss)
             # DDP averages gradients during backward. Stack detached metrics in
             # separate storage and use one collective for logging/NaN checks.
             loss_reduced, l_loss, g_loss = all_reduce_average(torch.stack([

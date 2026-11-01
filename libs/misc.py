@@ -1,6 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import argparse
 import os
+import random
 
 import torch
 import numpy as np
@@ -61,7 +62,56 @@ def load_checkpoint(path):
     return torch.load(path, map_location="cpu", weights_only=False)
 
 
-def resume_if_possible(checkpoint_dir, model_no_ddp, optimizer):
+def load_model_state(model, state_dict, require_detector=False, require_captioner=False):
+    """Allow partial captioner weights, but never silently freeze a random detector."""
+    target = model.state_dict()
+    matching = target.keys() & state_dict.keys()
+    if not matching:
+        raise ValueError("Checkpoint has no matching model keys; check the architecture and key prefixes")
+    if require_detector:
+        required = {name for name in target if name.startswith("detector.")
+                    and not name.endswith("num_batches_tracked")}
+        missing = required - state_dict.keys()
+        if missing:
+            preview = ", ".join(sorted(missing)[:5])
+            raise ValueError(f"Frozen detector is missing {len(missing)} checkpoint tensors: {preview}")
+    if require_captioner:
+        required = {name for name, parameter in model.named_parameters()
+                    if name.startswith("captioner.") and parameter.requires_grad}
+        missing = required - state_dict.keys()
+        unexpected = {name for name in state_dict.keys() - target.keys() if name.startswith("captioner.")}
+        if missing or unexpected:
+            raise ValueError(f"Captioner checkpoint does not match the selected method: "
+                             f"{len(missing)} missing, {len(unexpected)} unexpected parameters")
+    result = model.load_state_dict(state_dict, strict=False)
+    print(f"Loaded {len(matching)} model tensors; "
+          f"{len(result.missing_keys)} missing, {len(result.unexpected_keys)} unexpected")
+    return result
+
+
+def seed_everything(seed):
+    """Seed model initialization, prompt selection, and point sampling."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+
+def validate_model_configuration(args, checkpoint):
+    """Evaluation/resume must use the architecture saved with the checkpoint."""
+    saved = checkpoint.get("args")
+    if saved is None:
+        return
+    saved = vars(saved) if isinstance(saved, argparse.Namespace) else saved
+    defaults = {"fusion_method": "baseline", "neighbor_selection": "hilbert"}
+    for name in ("fusion_method", "neighbor_selection", "n_splits", "n_neighs", "nlatent_query"):
+        if hasattr(args, name) and (name in saved or name in defaults):
+            expected = saved.get(name, defaults.get(name))
+            if getattr(args, name) != expected:
+                raise ValueError(f"Checkpoint requires --{name} {expected}; got {getattr(args, name)}. "
+                                 "To change architecture, warm-start in a fresh output directory.")
+
+
+def resume_if_possible(checkpoint_dir, model_no_ddp, optimizer, args=None):
     """
     Resume if checkpoint is available.
     Return
@@ -77,11 +127,14 @@ def resume_if_possible(checkpoint_dir, model_no_ddp, optimizer):
         return epoch, best_val_metrics
 
     sd = load_checkpoint(last_checkpoint)
+    if args is not None:
+        validate_model_configuration(args, sd)
     epoch = sd["epoch"]
     best_val_metrics = sd["best_val_metrics"]
     print(f"Found checkpoint at {epoch}. Resuming.")
 
-    model_no_ddp.load_state_dict(sd["model"], strict=False)
+    load_model_state(model_no_ddp, sd["model"],
+                     require_detector=getattr(model_no_ddp, "freeze_detector", False), require_captioner=True)
     optimizer.load_state_dict(sd["optimizer"])
     print(
         f"Loaded model and optimizer state at {epoch}. Loaded best val metrics so far."
@@ -89,7 +142,10 @@ def resume_if_possible(checkpoint_dir, model_no_ddp, optimizer):
     return epoch, best_val_metrics
 
 def my_worker_init_fn(worker_id):
-    np.random.seed(np.random.get_state()[1][0] + worker_id)
+    # DataLoader gives each worker a fresh seed each epoch and per rank.
+    worker_seed = torch.initial_seed() % (2 ** 32)
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 @torch.jit.ignore

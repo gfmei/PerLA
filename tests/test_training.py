@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import os
+import random
 import tempfile
 import unittest
 from contextlib import ExitStack
@@ -10,7 +11,8 @@ from unittest.mock import Mock, patch
 import torch
 import numpy as np
 
-from libs.misc import resume_if_possible, save_checkpoint
+from libs.misc import (load_model_state, resume_if_possible, save_checkpoint,
+                       seed_everything, validate_model_configuration)
 from models.perla import engine
 
 
@@ -134,6 +136,15 @@ class TrainingRegressionTests(unittest.TestCase):
         self.run_training(model)
         self.assertAlmostEqual(model.weight.item(), 0.9, places=6)
 
+    def test_auxiliary_loss_weights_control_training_gradients(self):
+        for local_weight, global_weight, expected in ((0.1, 0.01, 0.877), (0, 0, 0.9)):
+            with self.subTest(local=local_weight, global_=global_weight):
+                model = TinyModel()
+                self.run_training(model, training_args(
+                    local_loss_weight=local_weight, global_loss_weight=global_weight,
+                ))
+                self.assertAlmostEqual(model.weight.item(), expected, places=6)
+
     def test_inactive_regularizer_does_not_copy_parameters(self):
         model = TinyModel()
         model.captioner.reference_point = {}
@@ -167,6 +178,62 @@ class TrainingRegressionTests(unittest.TestCase):
         self.assertTrue(restored_optimizer.state)
         for key, value in model.state_dict().items():
             torch.testing.assert_close(value, original[key])
+
+
+class InitializationTests(unittest.TestCase):
+    def make_model(self):
+        model = torch.nn.Module()
+        model.detector = torch.nn.Linear(2, 2)
+        model.captioner = torch.nn.Linear(2, 1)
+        return model
+
+    def test_detector_only_checkpoint_can_initialize_captioner_training(self):
+        model = self.make_model()
+        weights = {name: torch.full_like(value, 0.25) for name, value in model.state_dict().items()
+                   if name.startswith("detector.")}
+        load_model_state(model, weights, require_detector=True)
+        torch.testing.assert_close(model.detector.weight, torch.full((2, 2), 0.25))
+
+    def test_missing_frozen_detector_weights_are_rejected_before_loading(self):
+        model = self.make_model()
+        original = model.detector.weight.detach().clone()
+        with self.assertRaisesRegex(ValueError, "Frozen detector is missing"):
+            load_model_state(model, {"detector.weight": torch.zeros(2, 2)}, require_detector=True)
+        torch.testing.assert_close(model.detector.weight, original)
+
+    def test_unrelated_checkpoint_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "no matching model keys"):
+            load_model_state(self.make_model(), {"unrelated.weight": torch.ones(2, 2)})
+
+    def test_evaluation_rejects_untrained_captioner_parameters(self):
+        model = self.make_model()
+        weights = {name: value for name, value in model.state_dict().items() if name.startswith("detector.")}
+        with self.assertRaisesRegex(ValueError, "Captioner checkpoint does not match"):
+            load_model_state(model, weights, require_captioner=True)
+
+    def test_checkpoint_architecture_must_match_evaluation_or_resume(self):
+        args = argparse.Namespace(fusion_method="instruction", neighbor_selection="geometry", n_splits=6)
+        checkpoint = {"args": argparse.Namespace(fusion_method="instruction", neighbor_selection="geometry", n_splits=6)}
+        validate_model_configuration(args, checkpoint)
+        for field, value in (("fusion_method", "baseline"), ("neighbor_selection", "hilbert"), ("n_splits", 4)):
+            with self.subTest(field=field):
+                mismatched = argparse.Namespace(**vars(args))
+                setattr(mismatched, field, value)
+                with self.assertRaisesRegex(ValueError, "Checkpoint requires --" + field):
+                    validate_model_configuration(mismatched, checkpoint)
+
+    def test_legacy_checkpoint_defaults_to_baseline_fusion(self):
+        checkpoint = {"args": argparse.Namespace(n_splits=4)}
+        args = argparse.Namespace(fusion_method="instruction")
+        with self.assertRaisesRegex(ValueError, "--fusion_method baseline"):
+            validate_model_configuration(args, checkpoint)
+
+    def test_seed_repeats_python_numpy_and_torch_randomness(self):
+        seed_everything(17)
+        first = random.random(), np.random.rand(), torch.rand(1).item()
+        seed_everything(17)
+        second = random.random(), np.random.rand(), torch.rand(1).item()
+        self.assertEqual(first, second)
 
 
 if __name__ == "__main__":

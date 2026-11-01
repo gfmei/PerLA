@@ -8,7 +8,7 @@ python main.py \
     --use_color --use_normal \
     --detector perla \
     --captioner perla \
-    --pretrained_weights ./pretrained/vote2cap-detr/scannet_vote2cap_detr_XYZ_COLOR_NORMAL.pth \
+    --pretrained_weights ./pretrained/scannet_vote2cap_detr_XYZ_COLOR_NORMAL.pth \
     --warm_lr_epochs 1 \
     --dataset unified_3dllm_scene_description,unified_3dllm_embodied_dialogue,unified_3dllm_embodied_planning,unified_scanqa,unified_densecap_nr3d,unified_densecap_scanrefer \
     --vocab facebook/opt-1.3b \

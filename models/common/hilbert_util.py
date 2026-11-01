@@ -37,7 +37,7 @@ def quantise_to_grid(
     The function:
       • treats axis 0 as the batch dimension,
       • compresses *all remaining* point axes into one when computing mins/maxs,
-      • returns `q_xyz`, `mins`, `span` ready for broadcasting.
+      • returns `q_xyz`, `span`, `mins` ready for broadcasting.
 
     Shapes
     ------
@@ -582,108 +582,43 @@ class HilbertCurveBatch:
     # -----------------------------------------------------------------------
     def approx_knn_hilbert_batch(self, p_pcds, q_pcds, p_l, q_l, K=8, search_window=32, label_offset=1):
         """
-        A purely 'combined_dist' based approximate kNN for Q from P,
-        using label-center-based combined distances.
-        No final Euclidean distance.
+        Find K distinct source neighbors per query by label-aware Hilbert keys.
 
-        Steps:
-          1) Combine P,Q => shape (B,2N,3), combine labels => shape (B,2N)
-          2) combined_dist_2d = distances_from_points_label_center_batch_torch(...)
-          3) Sort => get rank for each point
-          4) For each query q => gather a local window => keep only P => pick top K by
-             difference in combined_dist.
+        Source and query coordinates must use the same integer grid. Search
+        only sorted source keys so dense query clusters cannot displace source
+        candidates. This is approximate in Euclidean space, not in key space.
 
         Returns:
-          neighbors_points: (B, N, K, 3)
-          neighbors_labels: (B, N, K)
-          same_label_mask:  (B, N, K)
+          neighbors_points: (B, N_q, K, 3)
+          source_indices:   (B, N_q, K), indices into P, never Q
+          same_label_mask:  (B, N_q, K)
         """
-        B, N_p, d = p_pcds.shape
-        N_q = q_pcds.shape[1]
-        # Basic checks
-        combined_points = torch.cat([p_pcds, q_pcds], dim=1)  # shape (B, N_p+N_q, 3)
-        combined_labels = torch.cat([p_l, q_l], dim=1)  # (B, N_p+N_q)
-
-        # 2) compute the single combined_dist for each point
-        combined_dist_2d = self.distances_from_points_label_center_batch_torch(
+        B, N_p, _ = p_pcds.shape
+        if not 1 <= K <= N_p:
+            raise ValueError(f"K must be between 1 and the source count ({N_p}), got {K}")
+        combined_points = torch.cat([p_pcds, q_pcds], dim=1)
+        combined_labels = torch.cat([p_l, q_l], dim=1)
+        keys = self.distances_from_points_label_center_batch_torch(
             combined_points, combined_labels, label_offset=label_offset
-        )  # shape (B, N_p+N_q)
-
-        # 2.1) sort => (B, 2N)
-        sorted_vals, sorted_idx = torch.sort(combined_dist_2d, dim=1)
-
-        # invert => rank_2d[b, orig_idx] = position
-        B_idx = torch.arange(B, device=p_pcds.device).view(B, 1)
-        i_idx = torch.arange(N_p + N_q, device=p_pcds.device).view(1, -1)
-        rank_2d = torch.zeros_like(sorted_idx)
-        rank_2d[B_idx, sorted_idx] = i_idx
-
-        # identify which index is from P or Q
-        idx_range = torch.arange(N_p + N_q, device=p_pcds.device).unsqueeze(0)  # (1, 2N)
-        isFromP_2d = (idx_range < N_p)  # (1, 2N), broadcast to (B,2N)
-        half_w = search_window // 2
-
-        # For purely vectorized approach, we do the same window/gather logic
-        # as in the no-loop Hilbert snippet, except using combined_dist_2d
-        # instead of the original Hilbert distances.
-
-        # 1) rank_of_p => rank_2d[b, i] for i in [0..N_p-1]
-        # Actually, for each point in P we want neighbors in P?
-        # Or for each point in Q?
-        # Typically for Q => but let's assume Q is appended => q_idx = N_p + j.
-
-        # If you want kNN for Q => shape (B, N_q), do the loop for j in [0..N_q).
-        # We'll do a vector approach: q_indices = N_p + j
-        # Then pick a window around rank_2d[b, q_idx].
-        q_indices = torch.arange(N_q, device=p_pcds.device).unsqueeze(0) + N_p  # shape (1, N_q) => [N_p..N_p+N_q-1]
-        ranks_q = torch.gather(rank_2d, dim=1, index=q_indices.expand(B, N_q))  # (B, N_q)
-
-        offsets = torch.arange(-half_w, half_w + 1, device=p_pcds.device).view(1, 1, -1)
-        window_ranks_3d = ranks_q.unsqueeze(-1) + offsets  # (B, N_q, search_window)
-        window_ranks_3d = window_ranks_3d.clamp(0, N_p + N_q - 1)
-
-        # gather candidate original indices => (B, N_q, search_window)
-        sorted_idx_3d = sorted_idx.unsqueeze(1).expand(B, N_q, N_p + N_q)
-        candidate_idx_3d = torch.gather(sorted_idx_3d, dim=2, index=window_ranks_3d)
-
-        # gather their combined_dist
-        combined_dist_3d_exp = combined_dist_2d.unsqueeze(1).expand(B, N_q, N_p + N_q)
-        candidate_comb_3d = torch.gather(combined_dist_3d_exp, dim=2, index=window_ranks_3d)
-
-        # mask out candidates from Q
-        # 1) unsqueeze and expand to (B, N_q, 2N)
-        isFromP_batch = isFromP_2d.unsqueeze(1).expand(B, N_q, N_p + N_q)
-        # 2) gather along dim=2, since candidate_idx_3d is (B, N_q, search_window)
-        isFromP_candidates = torch.gather(isFromP_batch, dim=2, index=candidate_idx_3d)
-        LARGE = 1e9
-        candidate_diff = torch.where(isFromP_candidates,
-                                     torch.abs(candidate_comb_3d - torch.gather(
-                                         combined_dist_2d, 1,
-                                         q_indices.expand(B, N_q)).unsqueeze(
-                                         -1)),
-                                     torch.full_like(candidate_comb_3d, LARGE))
-
-        # topk
-        topk_vals, topk_idx = torch.topk(candidate_diff, K, dim=2, largest=False)
-        topk_orig_idx = torch.gather(candidate_idx_3d, dim=2, index=topk_idx)
-
-        # gather coords, labels
-        combined_points_4d = combined_points.unsqueeze(1).expand(B, N_q, N_p + N_q, 3)
-        neighbors_points_4d = torch.gather(
-            combined_points_4d,
-            dim=2,
-            index=topk_orig_idx.unsqueeze(-1).expand(B, N_q, K, 3)
         )
-        neighbors_labels_3d = torch.gather(
-            torch.cat([p_l, q_l], dim=1).unsqueeze(1).expand(B, N_q, N_p + N_q),
-            dim=2,
-            index=topk_orig_idx
-        )
-        # fill final
-        neighbors_points = neighbors_points_4d
-        # neighbors_labels = neighbors_labels_3d
-        # mask
-        same_label_mask = (neighbors_labels_3d == q_l.unsqueeze(-1)).long()
+        source_keys, source_order = keys[:, :N_p].sort(dim=1)
+        query_keys = keys[:, N_p:].contiguous()
+        insertion = torch.searchsorted(source_keys, query_keys)
+
+        # At least K candidates on either side contain the K nearest scalar
+        # keys. Shift the whole window at boundaries to avoid duplicate indices.
+        width = min(N_p, max(search_window, 2 * K))
+        starts = (insertion - width // 2).clamp(0, N_p - width)
+        ranks = starts.unsqueeze(-1) + torch.arange(width, device=p_pcds.device)
+        batch = torch.arange(B, device=p_pcds.device)[:, None, None]
+        candidate_keys = source_keys[batch, ranks]
+        candidate_indices = source_order[batch, ranks]
+        nearest = (candidate_keys - query_keys.unsqueeze(-1)).abs().topk(
+            K, dim=-1, largest=False
+        ).indices
+        topk_orig_idx = candidate_indices.gather(2, nearest)
+        neighbors_points = p_pcds[batch, topk_orig_idx]
+        same_label_mask = (p_l[batch, topk_orig_idx] == q_l.unsqueeze(-1)).long()
 
         return neighbors_points, topk_orig_idx, same_label_mask
 
