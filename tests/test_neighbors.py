@@ -1,4 +1,5 @@
 import unittest
+import itertools
 from unittest.mock import patch
 
 import torch
@@ -8,6 +9,29 @@ from models.perla.merger import LearnCut
 
 
 class HilbertNeighborTests(unittest.TestCase):
+    def test_tensor_keys_match_scalar_reference_exhaustively(self):
+        for dimensions, bits in ((1, 5), (2, 4), (3, 3)):
+            with self.subTest(dimensions=dimensions, bits=bits):
+                curve = HilbertCurveBatch(p=bits, n=dimensions)
+                points = list(itertools.product(range(2 ** bits), repeat=dimensions))
+                inputs = torch.tensor(points).unsqueeze(0)
+                original = inputs.clone()
+                expected = torch.tensor([curve.distance_from_point(p) for p in points]).unsqueeze(0)
+                torch.testing.assert_close(curve.distances_from_points_batch(inputs), expected, rtol=0, atol=0)
+                torch.testing.assert_close(inputs, original, rtol=0, atol=0)
+
+    def test_fractional_centroids_strides_and_large_integer_keys(self):
+        torch.manual_seed(4)
+        for dimensions, bits in ((3, 10), (3, 21), (4, 15)):
+            with self.subTest(dimensions=dimensions, bits=bits):
+                curve = HilbertCurveBatch(p=bits, n=dimensions)
+                points = torch.rand(2, dimensions, 71, dtype=torch.float64) * (2 ** bits - 1)
+                points = points.transpose(1, 2)
+                expected = torch.tensor([[curve.distance_from_point(p) for p in row] for row in points.tolist()])
+                torch.testing.assert_close(curve.distances_from_points_batch(points), expected, rtol=0, atol=0)
+        with self.assertRaises(ValueError):
+            HilbertCurveBatch(p=10, n=3).distances_from_points_batch(torch.tensor([[[-1, 0, 0]]]))
+
     def check_neighbors(self, source_keys, query_keys, k, window):
         source_keys = torch.tensor(source_keys, dtype=torch.float64)
         query_keys = torch.tensor(query_keys, dtype=torch.float64)

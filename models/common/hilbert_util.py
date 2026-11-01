@@ -11,9 +11,8 @@ And add new methods:
     distances_from_points_batch_torch(...)
     points_from_distances_batch_torch(...)
 
-These batch methods accept tensors of shape [B, N, n] or [B, N], flatten internally,
-call the original single-sample methods in a loop, and reshape results back to
-[B, N] or [B, N, n].
+The batched encoder runs integer operations on the input device. The inverse
+batch conversion retains the scalar reference implementation.
 """
 
 import multiprocessing
@@ -363,17 +362,36 @@ class HilbertCurveBatch:
         if dims != self.n:
             raise ValueError(f"points_3d.shape[-1]={dims} != self.n={self.n}")
 
-        # Flatten: (B*N, n)
-        points_2d = points_3d.reshape(B * N, dims)
-        # Convert to Python list of lists for single-sample method
-        points_list = points_2d.tolist()
-        # Compute distances in a loop (possibly parallel)
-        dist_list = self.distances_from_points(points_list)
-        # Convert to a torch tensor
-        dist_tensor = torch.tensor(dist_list, dtype=torch.long, device=points_3d.device)
-        # Reshape to (B, N)
-        dist_2d = dist_tensor.reshape(B, N)
-        return dist_2d
+        if self.p * self.n > 63:
+            raise ValueError("Batched Hilbert distances must fit in signed int64")
+        # Match int() in the scalar reference, including fractional centroids.
+        points = points_3d.to(torch.long)
+        if bool(((points < self.min_x) | (points > self.max_x)).any()):
+            raise ValueError(f"Point coordinates must lie in [0, {self.max_x}]")
+        coordinates = list(points.unbind(-1))
+        # Skilling's inverse undo and Gray encoding, vectorized over points.
+        # Out-of-place updates keep views of the caller's tensor unchanged.
+        for bit in range(self.p - 1, 0, -1):
+            q = 1 << bit
+            mask = q - 1
+            for axis in range(self.n):
+                invert = (coordinates[axis] & q).ne(0)
+                exchange = (coordinates[0] ^ coordinates[axis]) & mask
+                coordinates[0] = coordinates[0] ^ torch.where(invert, mask, exchange)
+                if axis:
+                    coordinates[axis] = coordinates[axis] ^ torch.where(invert, 0, exchange)
+        for axis in range(1, self.n):
+            coordinates[axis] = coordinates[axis] ^ coordinates[axis - 1]
+        correction = torch.zeros_like(coordinates[0])
+        for bit in range(self.p - 1, 0, -1):
+            q = 1 << bit
+            correction = correction ^ torch.where((coordinates[-1] & q).ne(0), q - 1, 0)
+        coordinates = [coordinate ^ correction for coordinate in coordinates]
+        distance = torch.zeros_like(correction)
+        for bit in range(self.p - 1, -1, -1):
+            for coordinate in coordinates:
+                distance = (distance << 1) | ((coordinate >> bit) & 1)
+        return distance
 
     def points_from_distances_batch(self, distances_2d: torch.Tensor) -> torch.Tensor:
         """

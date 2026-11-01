@@ -112,6 +112,10 @@ uses the same merged features without those auxiliary calculations. Graph
 normalization uses row/column scaling to avoid dense products with diagonal
 matrices.
 
+Batched Hilbert key construction uses integer tensor operations on the input
+device, avoiding Python point loops and GPU-to-CPU transfers while preserving
+the scalar encoder's keys.
+
 Surface normals follow the same geometric augmentation as the point
 coordinates, and colors remain aligned through cuboid cropping. Use the same
 preprocessing and augmentation settings for all ablation variants.
