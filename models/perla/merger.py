@@ -257,7 +257,8 @@ class LearnCut(nn.Module):
 
         return loss
 
-    def forward(self, sp_fea, sp_xyz, p_fea, p_xyz, sp_segs, p_segs, instruction_context=None):
+    def forward(self, sp_fea, sp_xyz, p_fea, p_xyz, sp_segs, p_segs, instruction_context=None,
+                compute_auxiliary_losses=True):
         """
         Forward pass for the Learnable SLIC algorithm.
         Args:
@@ -316,6 +317,11 @@ class LearnCut(nn.Module):
 
         local_proposal = self.projection(self.norm2(attn_fea + sp_fea))
         sp_fea_new = self.fuse_features(sp_fea, local_proposal, instruction_context)
+        if not compute_auxiliary_losses:
+            # Graph construction and Sinkhorn assignments only supervise
+            # training; neither contributes to the feature passed to Q-Former.
+            zero = sp_fea_new.new_zeros(())
+            return sp_fea_new, zero, zero
         # Apply MinCut pooling
         l_cut_loss = self.min_cut(sp_xyz, sp_fea, sp_fea_new)
         l_fit_loss = torch.norm(

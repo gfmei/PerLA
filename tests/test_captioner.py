@@ -229,6 +229,24 @@ class CaptionerRegressionTests(unittest.TestCase):
         torch.testing.assert_close(actual, expected)
         self.assertGreater((different_instruction - expected).abs().max().item(), 1e-6)
 
+    def test_inference_skips_graph_losses_without_changing_captions(self):
+        for fusion, neighbors in (("baseline", "hilbert"), ("instruction", "geometry")):
+            with self.subTest(fusion=fusion), torch.no_grad():
+                model, detector, inputs = make_captioner_fixture(fusion_method=fusion, neighbor_selection=neighbors)
+                original_forward = model.en_slic.forward
+
+                def with_training_losses(*args, **kwargs):
+                    kwargs['compute_auxiliary_losses'] = True
+                    return original_forward(*args, **kwargs)
+
+                with patch.object(model.en_slic, 'forward', side_effect=with_training_losses):
+                    expected = model.predict_densecap(dict(detector), inputs, 'dense-cap', max_gen_length=4)
+                with patch.object(model.en_slic, 'min_cut', side_effect=AssertionError('graph loss ran in inference')):
+                    actual = model.predict_densecap(dict(detector), inputs, 'dense-cap', max_gen_length=4)
+                torch.testing.assert_close(actual['output_ids'], expected['output_ids'])
+                self.assertEqual(actual['l_loss'].item(), 0)
+                self.assertEqual(actual['g_loss'].item(), 0)
+
     @unittest.skipUnless(torch.distributed.is_available() and torch.distributed.is_gloo_available(),
                          "Gloo is required for the distributed fusion test")
     def test_two_process_instruction_fusion_backward(self):

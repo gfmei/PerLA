@@ -150,11 +150,12 @@ class ScanNetBaseDataset(Dataset):
                 instance_bboxes,
                 per_point_labels,
             ) = self.random_cuboid_augmentor(
-                point_cloud, instance_bboxes, [instance_labels, semantic_labels, spt_labels]
+                point_cloud, instance_bboxes, [instance_labels, semantic_labels, spt_labels, pcl_color]
             )
             instance_labels = per_point_labels[0]
             semantic_labels = per_point_labels[1]
             spt_labels = per_point_labels[2]
+            pcl_color = per_point_labels[3]
 
         point_cloud, choices = pc_util.random_sampling(
             point_cloud, self.num_points, return_choices=True
@@ -170,21 +171,30 @@ class ScanNetBaseDataset(Dataset):
 
         # ------------------------------- DATA AUGMENTATION ------------------------------
         if self.augment:
+            normal_start = 6 if self.use_color else 3
 
             if np.random.random() > 0.5:
                 # Flipping along the YZ plane
                 point_cloud[:, 0] = -1 * point_cloud[:, 0]
+                if self.use_normal:
+                    point_cloud[:, normal_start] *= -1
                 target_bboxes[:, 0] = -1 * target_bboxes[:, 0]
 
             if np.random.random() > 0.5:
                 # Flipping along the XZ plane
                 point_cloud[:, 1] = -1 * point_cloud[:, 1]
+                if self.use_normal:
+                    point_cloud[:, normal_start + 1] *= -1
                 target_bboxes[:, 1] = -1 * target_bboxes[:, 1]
 
             # Rotation along up-axis/Z-axis
             rot_angle = (np.random.random() * np.pi / 18) - np.pi / 36  # -5 ~ +5 degree
             rot_mat = pc_util.rotz(rot_angle)
             point_cloud[:, 0:3] = np.dot(point_cloud[:, 0:3], np.transpose(rot_mat))
+            if self.use_normal:
+                point_cloud[:, normal_start:normal_start + 3] = np.dot(
+                    point_cloud[:, normal_start:normal_start + 3], rot_mat.T
+                )
             target_bboxes = self.dataset_config.rotate_aligned_boxes(
                 target_bboxes, rot_mat
             )

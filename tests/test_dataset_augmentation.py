@@ -1,0 +1,72 @@
+import argparse
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import numpy as np
+
+from datasets.data_config import DatasetConfig
+from datasets.scannet_base_dataset import ScanNetBaseDataset, MEAN_COLOR_RGB
+from libs.pc_utils import rotz
+
+
+class ScanNetAugmentationTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.scene = "scene0000_00"
+        self.xyz = np.array([[0, 0, 0], [1, 1, 1], [2, 0, 2], [0, 3, 1]], dtype=np.float32)
+        self.colors = np.arange(12, dtype=np.float32).reshape(4, 3) * 10
+        self.normals = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 0, 0]], dtype=np.float32)
+        arrays = {
+            "aligned_vert": np.concatenate([self.xyz, self.colors, self.normals], axis=1),
+            "ins_label": np.zeros(4, dtype=np.int64),
+            "sem_label": np.full(4, 3, dtype=np.int64),
+            "spt": np.arange(4),
+            "aligned_bbox": np.array([[1, 1.5, 1, 2, 3, 2, 3, 0]], dtype=np.float32),
+        }
+        for suffix, value in arrays.items():
+            np.save(Path(self.directory.name) / f"{self.scene}_{suffix}.npy", value)
+
+    def make_dataset(self, use_color, crop=False):
+        args = argparse.Namespace(root_dir=self.directory.name)
+        return ScanNetBaseDataset(args, DatasetConfig(args), split_set="all", num_points=3 if crop else 4,
+                                  use_color=use_color, use_normal=True, augment=True, use_random_cuboid=crop)
+
+    @staticmethod
+    def ordered_sampling(cloud, count, return_choices):
+        return cloud, np.arange(len(cloud))
+
+    def test_normals_follow_both_reflections_and_rotation(self):
+        transform = np.diag([-1, -1, 1]) @ rotz(np.pi / 36).T
+        for use_color in (False, True):
+            with self.subTest(use_color=use_color):
+                dataset = self.make_dataset(use_color)
+                with patch("numpy.random.random", side_effect=[0.9, 0.9, 1.0]), \
+                        patch("libs.pc_utils.random_sampling", side_effect=self.ordered_sampling):
+                    result = dataset._get_scan_data(self.scene)
+                normal_start = 6 if use_color else 3
+                np.testing.assert_allclose(result["point_clouds"][:, :3], self.xyz @ transform, atol=1e-6)
+                np.testing.assert_allclose(result["point_clouds"][:, normal_start:normal_start + 3],
+                                           self.normals @ transform, atol=1e-6)
+
+    def test_cuboid_crop_keeps_colors_and_superpoints_aligned(self):
+        keep = np.array([3, 1, 2])
+        for use_color in (False, True):
+            with self.subTest(use_color=use_color):
+                dataset = self.make_dataset(use_color, crop=True)
+                dataset.random_cuboid_augmentor = lambda cloud, boxes, labels: (
+                    cloud[keep], boxes, [label[keep] for label in labels]
+                )
+                with patch("numpy.random.random", side_effect=[0.1, 0.1, 0.5]), \
+                        patch("libs.pc_utils.random_sampling", side_effect=self.ordered_sampling):
+                    result = dataset._get_scan_data(self.scene)
+                expected_colors = (self.colors - MEAN_COLOR_RGB) / 256 if use_color else self.colors
+                np.testing.assert_allclose(result["pcl_color"], expected_colors[keep], atol=1e-6)
+                np.testing.assert_allclose(result["point_clouds"][:, :3], self.xyz[keep])
+                np.testing.assert_array_equal(result["spts"].ravel(), [2, 0, 1])
+
+
+if __name__ == "__main__":
+    unittest.main()

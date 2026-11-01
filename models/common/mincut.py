@@ -340,13 +340,14 @@ def normalized_laplacian(adj_matrix, EPS=1e-15):
 
     # Avoid division by zero
     degree_inv_sqrt = 1.0 / torch.sqrt(degree + EPS)
-    degree_inv_sqrt = torch.diag_embed(degree_inv_sqrt)  # B x N x N
 
     # Identity matrix
-    identity = torch.eye(N, device=adj_matrix.device).unsqueeze(0).expand(B, N, N)
+    identity = torch.eye(N, device=adj_matrix.device, dtype=adj_matrix.dtype).unsqueeze(0)
 
     # Compute normalized Laplacian: L = I - D^{-1/2} * A * D^{-1/2}
-    norm_adj = torch.bmm(torch.bmm(degree_inv_sqrt, adj_matrix), degree_inv_sqrt)
+    # Multiplying by diagonal matrices is row/column scaling, not a dense
+    # matrix product. This uses O(N^2) work instead of O(N^3).
+    norm_adj = degree_inv_sqrt.unsqueeze(-1) * adj_matrix * degree_inv_sqrt.unsqueeze(-2)
     laplacian = identity - norm_adj
 
     return laplacian, norm_adj

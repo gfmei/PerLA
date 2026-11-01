@@ -360,6 +360,7 @@ class Captioner(nn.Module):
             detector_output['l_enc_feats'], detector_output['l_enc_xyz'],
             detector_output['enc_spts'], detector_output['l_enc_spts'],
             instruction_context=instruction_context,
+            compute_auxiliary_losses=self.training,
         )
         return self.encoder_to_qformer_projection(merge_features), l_loss, g_loss
 

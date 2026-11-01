@@ -52,8 +52,7 @@ initialization file. Use a fresh output directory for every ablation because
 - OPT-1.3B weights/tokenizer and the LL3DA BERT embedding checkpoint for
   `--qformer_vocab` (the default local directory is `bert-base-embedding`).
 - The detector checkpoint at `pretrained/scannet_vote2cap_detr_XYZ_COLOR_NORMAL.pth`.
-- An allocated CUDA GPU job and the `seer` environment. The detector imports
-  `addict`; version 2.4.0 was used for the CPU validation.
+- A CUDA-compatible PyTorch environment with the project dependencies, including `addict`.
 
 ## Initial experiment
 
@@ -70,7 +69,6 @@ accumulation in this trainer. Run from the repository root, with the prepared
 assets above; use `--vocab` and `--qformer_vocab` to override model locations.
 
 ```bash
-conda activate seer
 SCANNET_ROOT=/path/to/prepared/scannet
 
 bash scripts/opt-1.3b/train.generalist.sh \

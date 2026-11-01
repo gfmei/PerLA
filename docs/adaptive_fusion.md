@@ -81,7 +81,6 @@ simultaneous data or learning-rate change to the architecture.
 Example ScanQA candidate run, using two already allocated GPUs:
 
 ```bash
-conda activate seer
 SCANNET_ROOT=/path/to/prepared/scannet
 GENERALIST=/path/to/generalist/checkpoint_best.pth
 
@@ -106,29 +105,17 @@ ScanRefer tuning/evaluation scripts for CIDEr@0.5, preserving the same controls.
 Evaluation and resume reject mismatched saved architecture settings or missing
 trainable captioner weights; only warm-start training permits new gate weights.
 
-## Validation and cost
+## Implementation notes
 
-```bash
-python -m unittest discover -s tests -v
-python scripts/benchmark_fusion.py --repeats 10
-```
+Graph and Sinkhorn objectives are computed during training only. Evaluation
+uses the same merged features without those auxiliary calculations. Graph
+normalization uses row/column scaling to avoid dense products with diagonal
+matrices.
 
-Tests cover geometric reranking, gate limits, padding/response independence,
-instruction sensitivity after activating learned context weights, gradients
-through the real tiny Q-Former/OPT path, and cached-caption equivalence. The
-synthetic benchmark compares all five fusion variants and reports latency and
-parameter overhead. It excludes the detector, instruction projection, Q-Former
-and LLM. Run with `--device cuda` inside an allocation for GPU measurements.
+Surface normals follow the same geometric augmentation as the point
+coordinates, and colors remain aligned through cuboid cropping. Use the same
+preprocessing and augmentation settings for all ablation variants.
 
-One `seer` CPU run (batch 2, 128 global points, 768 local points, dimension 256,
-K=24, median of five repeats) measured 108.31 ms for the baseline and 119.04 ms
-for the full candidate, about 10% fusion overhead. This does not estimate
-full-model GPU overhead. Two-process Gloo tests also exercise training with
-different box/click prompt branches on each rank; DDP detects unused parameters
-because those branches vary by task.
-
-The full experiments still require prepared ScanNet scenes, ScanQA annotations,
-OPT/BERT weights, a trained generalist checkpoint or a generalist training run,
-and a GPU allocation. See the [benchmark protocol](ll3da_benchmark.md) for
-comparison details. No trained weights or superior benchmark score are provided
-by this code change.
+See the [benchmark protocol](ll3da_benchmark.md) for data requirements and
+evaluation settings. Trained weights for this experimental variant are not
+included.
