@@ -253,8 +253,7 @@ class Captioner(nn.Module):
         ## caption generation cores
         self.transformer = AutoModelForCausalLM.from_pretrained(
             args.vocab,
-            torch_dtype=self.dtype,
-            use_safetensors=True)
+            torch_dtype=self.dtype)
         self.n_embd = self.transformer.config.hidden_size
 
         ## Multi-modality Transformer

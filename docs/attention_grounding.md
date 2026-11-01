@@ -49,6 +49,14 @@ represented referents. Compare baseline, baseline + KL, adaptive fusion, and
 adaptive fusion + KL under the same [evaluation protocol](ll3da_benchmark.md).
 ScanQA and ScanRefer benchmark improvements have not yet been measured.
 
+For a bounded ScanQA comparison, `scripts/run_grounding_pilot.py` accepts the
+usual `main.py` training arguments plus `--steps` and `--validation_samples`.
+Run each objective in a separate output directory with identical settings.
+The runner fixes validation sampling, saves predictions before and after
+training, and records actual optimizer steps and GPU memory. Use
+`--validation_samples 0` for the full validation split; subset scores are
+diagnostics and are not comparable to published full-split results.
+
 Reference implementation: ReTok3D,
 `models/point_mllm/attention_grounding.py`. This PerLA implementation adapts its
 occupancy targets and forward-KL normalization; it does not depend on ReTok3D at

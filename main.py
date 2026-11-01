@@ -20,7 +20,7 @@ from libs.misc import (load_checkpoint, load_model_state, resume_if_possible,
                        seed_everything, validate_model_configuration)
 
 
-def make_args_parser():
+def make_args_parser(argv=None):
     parser = argparse.ArgumentParser("PerLA", add_help=False)
     ##### Optimizer #####
     parser.add_argument("--base_lr", default=5e-4, type=float)
@@ -128,7 +128,7 @@ def make_args_parser():
     parser.add_argument("--ngpus", default=1, type=int, help='number of gpus')
     parser.add_argument("--dist_url", default='tcp://localhost:12345', type=str)
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     args.use_height = not args.no_height
     validate_grounding_settings(args.kl_attention_weight, args.kl_attention_smoothing)
     if args.kl_attention_loss and args.captioner is None:
