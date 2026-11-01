@@ -162,28 +162,6 @@ Download files from the `opt-1.3b` checkpoint (or any other decoder-only LLM) at
 Before contributing, please review our [contribution guidelines](https://github.com/gfmei/PerLA/blob/main/CONTRIBUTING.md).
 
 
-## Development checks
-
-Run the CPU regression suite in the `seer` environment:
-
-```bash
-conda run -n seer python -m unittest discover -s tests -v
-```
-
-The tests cover training, checkpoint resume, evaluation, distributed gradients,
-and caption generation using small randomly initialized models. They require no
-ScanNet data or downloaded model weights. Captioner tests require Transformers;
-the two-process distributed test requires PyTorch's Gloo backend.
-
-To compare repeated scene encoding with shared scene features during dense captioning:
-
-```bash
-conda run -n seer python scripts/benchmark_captioner.py --proposals 32 --repeats 5
-```
-
-This synthetic CPU benchmark checks that generated tokens and auxiliary losses
-match before reporting timings. It does not measure full-model GPU performance.
-
 ## Citation
 If you find our code or paper useful, please cite
 ```bibtex
