@@ -26,40 +26,26 @@ prefix for a frozen OPT-1.3B language model.
 
 ## News
 
-- **2026-11** · Code release with an improved training recipe, task-specific
-  checkpoints, and a corrected PointNet++ ball query (see [Release notes](#release-notes)).
+- **2026-11** · Code release with an improved training recipe, a ScanQA
+  checkpoint, and a corrected PointNet++ ball query (see [Release notes](#release-notes)).
 - **2025** · PerLA is accepted at CVPR 2025.
 
 ## Results
 
-Task-specific training from the pretrained detector, without generalist
-pretraining, on the ScanNet validation splits. Each number comes from a single
-training run (seed 0); the checkpoint is the epoch with the best validation
-CIDEr. LL3DA numbers are from its paper (Table 5, trained per task from
-scratch).
-
-### 3D question answering (ScanQA)
+3D question answering on the ScanQA validation split, trained on ScanQA from
+the pretrained detector without generalist pretraining. The number comes from
+a single training run (seed 0); the checkpoint is the epoch with the best
+validation CIDEr. LL3DA numbers are from its paper (Table 5, trained on ScanQA
+from scratch).
 
 | Method | CIDEr | BLEU-4 | METEOR | ROUGE-L |
 | --- | ---: | ---: | ---: | ---: |
 | LL3DA | 74.80 | 13.68 | 15.40 | 36.25 |
 | **PerLA** | **77.06** | **13.91** | **15.46** | **37.00** |
 
-### 3D dense captioning (IoU 0.5)
-
-| Method | ScanRefer C | B-4 | M | R | Nr3D C | B-4 | M | R |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| LL3DA | **62.84** | **35.81** | **25.81** | **54.45** | 44.95 | 27.67 | **25.67** | **55.79** |
-| **PerLA** | 62.16 | 34.37 | 25.51 | 53.66 | **46.76**† | **28.25**† | 25.53† | 55.47† |
-
-C: CIDEr, B-4: BLEU-4, M: METEOR, R: ROUGE-L.
-† Nr3D training is still running; these numbers come from the first 8 of its
-16 epochs. They will be updated with the final checkpoint.
-
-The ScanQA and ScanRefer models use gated fusion. The Nr3D model also uses the
-part and context prompts and 3D rotary position encoding described below; these
-have not yet been trained on the other two benchmarks. Results with generalist
-pretraining and fine-tuning are in the paper.
+The model uses gated fusion (see [Method options](#method-options)). Results
+with generalist pretraining and fine-tuning, including dense captioning, are in
+the paper.
 
 ## Installation
 
@@ -131,13 +117,7 @@ bash scripts/eval.sh scanqa ckpts/perla_scanqa.pth
 The first argument selects the benchmark: `scanqa`, `scanrefer` or `nr3d`.
 Predictions and metrics are written next to the checkpoint (or to
 `OUTPUT_DIR`). Use `NGPUS=4` to evaluate on several GPUs. Metrics are printed
-as fractions; the tables above multiply them by 100.
-
-| Checkpoint | Benchmark | Recipe |
-| --- | --- | --- |
-| [`perla_scanqa.pth`](https://huggingface.co/RyanMei/PerLA/blob/main/perla_scanqa.pth) | ScanQA | gated fusion |
-| [`perla_scanrefer.pth`](https://huggingface.co/RyanMei/PerLA/blob/main/perla_scanrefer.pth) | ScanRefer | gated fusion |
-| `perla_nr3d.pth` (coming soon) | Nr3D | gated fusion, part/context prompts, 3D RoPE |
+as fractions; the table above multiplies them by 100.
 
 ## Training
 
@@ -161,8 +141,8 @@ to fit cluster time limits. Re-running with the same output directory resumes
 from its last epoch:
 
 ```bash
-STOP_EPOCH=8 bash scripts/train.sh nr3d outputs/perla_nr3d                # epochs 1-8
-START_EPOCH=8 bash scripts/train.sh nr3d outputs/perla_nr3d               # epochs 9-16
+STOP_EPOCH=12 bash scripts/train.sh scanqa outputs/perla_scanqa     # epochs 1-12
+START_EPOCH=12 bash scripts/train.sh scanqa outputs/perla_scanqa    # epochs 13-24
 ```
 
 Environment variables: `NGPUS` (default 2, must divide 16), `DATA_ROOT`, `OPT`,
