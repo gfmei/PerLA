@@ -76,8 +76,7 @@ def do_train(
     loss_avg = SmoothedValue(window_size=10)
     l_loss_avg = SmoothedValue(window_size=10)
     g_loss_avg = SmoothedValue(window_size=10)
-    kl_loss_avg = SmoothedValue(window_size=10)
-    kl_supervised_avg = SmoothedValue(window_size=10)
+    missed_prompt_avg = SmoothedValue(window_size=10)
 
     model.train()
     barrier()
@@ -120,9 +119,8 @@ def do_train(
             metrics = [
                 loss.detach(), l_loss.detach(), g_loss.detach(),
             ]
-            if getattr(args, 'kl_attention_loss', False):
-                metrics.extend([outputs['kl_attention_loss'].detach(),
-                                outputs['kl_attention_supervised_fraction'].detach()])
+            if getattr(args, 'min_box_prompt_iou', 0) > 0:
+                metrics.append(outputs['missed_box_prompts'].detach())
             reduced = all_reduce_average(torch.stack(metrics)).unbind()
             loss_reduced, l_loss, g_loss = reduced[:3]
 
@@ -143,32 +141,28 @@ def do_train(
             optimizer.step()
             args.optimizer_steps += 1
 
-            # Regularization step
-            if getattr(model_no_ddp.captioner, "reference_point", None):
-                model_no_ddp.captioner.update_reference_point()
-
             time_delta.update(time.time() - curr_time)
             loss_avg.update(loss_reduced.item())
             l_loss_avg.update(l_loss.item())
             g_loss_avg.update(g_loss.item())
-            if getattr(args, 'kl_attention_loss', False):
-                kl_loss_avg.update(reduced[3].item())
-                kl_supervised_avg.update(reduced[4].item())
+            if getattr(args, 'min_box_prompt_iou', 0) > 0:
+                missed_prompt_avg.update(reduced[-1].item())
 
             # logging
             if is_primary() and curr_iter % args.log_every == 0:
                 mem_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
                 eta_seconds = (max_iters - curr_iter) * time_delta.avg
                 eta_str = str(datetime.timedelta(seconds=int(eta_seconds)))
-                grounding_log = (f"KL {kl_loss_avg.avg:0.4f}; Grounded {kl_supervised_avg.avg:0.2%}; "
-                                 if getattr(args, 'kl_attention_loss', False) else "")
+                prompt_log = ""
+                if getattr(args, 'min_box_prompt_iou', 0) > 0:
+                    prompt_log = f"Missed box prompts {missed_prompt_avg.avg:0.2%}; "
                 logout(
                     f"Epoch [{curr_epoch}/{args.max_epoch}]; "
                     f"Iter [{curr_iter}/{max_iters}]; "
                     f"Loss {loss_avg.avg:0.2f}; "
                     f"Local Loss {l_loss_avg.avg:0.2f}; "
                     f"Global Loss {g_loss_avg.avg:0.2f}; "
-                    f"{grounding_log}"
+                    f"{prompt_log}"
                     f"LR {curr_lr:0.2e}; Iter time {time_delta.avg:0.2f}; "
                     f"ETA {eta_str}; Mem {mem_mb:0.2f}MB"
                 )

@@ -17,7 +17,7 @@ if HAS_TRANSFORMERS:
     from models.perla.merger import LearnCut
 
 
-def make_captioner_fixture(nproposals=4, fusion_method="baseline", neighbor_selection="hilbert"):
+def make_captioner_fixture(nproposals=4, fusion_method="baseline"):
     """A small real model with random weights; no downloads or CUDA required."""
     torch.manual_seed(7)
     model = Captioner.__new__(Captioner)
@@ -28,7 +28,6 @@ def make_captioner_fixture(nproposals=4, fusion_method="baseline", neighbor_sele
     model.tokenizer = SimpleNamespace(eos_token_id=2)
     model.max_gen_per_iter = 3
     model.caption_config = dict(eos_token_id=2, num_beams=None)
-    model.reference_point = {}
     model.transformer = OPTForCausalLM(OPTConfig(
         vocab_size=24, hidden_size=16, word_embed_proj_dim=16, ffn_dim=32,
         num_hidden_layers=1, num_attention_heads=2, dropout=0.0,
@@ -38,10 +37,7 @@ def make_captioner_fixture(nproposals=4, fusion_method="baseline", neighbor_sele
         intermediate_size=32, num_hidden_layers=2, num_attention_heads=2,
         hidden_dropout_prob=0.0, attention_probs_dropout_prob=0.0,
     ))
-    model.en_slic = LearnCut(16, 16, n_neighs=4, n_clus=4, n_split=2,
-                            fusion_method=fusion_method, neighbor_selection=neighbor_selection)
-    if fusion_method == "instruction":
-        model.instruction_to_scene = torch.nn.Sequential(torch.nn.LayerNorm(16), torch.nn.Linear(16, 16))
+    model.en_slic = LearnCut(16, 16, n_neighs=4, n_clus=4, n_split=2, fusion_method=fusion_method)
     model.encoder_to_qformer_projection = torch.nn.Linear(16, 16)
     model.prompt_encoder = PromptEncoder(16, 2, 16, 16)
     model.latent_query = torch.nn.Embedding(2, 16)
@@ -107,7 +103,7 @@ def run_distributed_fusion_steps(rank, rendezvous):
         timeout=datetime.timedelta(seconds=30),
     )
     try:
-        model, detector, inputs = make_captioner_fixture(fusion_method="instruction", neighbor_selection="geometry")
+        model, detector, inputs = make_captioner_fixture(fusion_method="gated")
         model.train()
         distributed_model = torch.nn.parallel.DistributedDataParallel(model, find_unused_parameters=True)
         optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
@@ -171,38 +167,19 @@ class CaptionerRegressionTests(unittest.TestCase):
         self.assertFalse(forward.call_args.kwargs["use_cache"])
         (output["loss"] + output["l_loss"] + output["g_loss"]).backward()
         self.assertTrue(torch.isfinite(model.latent_query.weight.grad).all())
-        self.assertEqual(model.reference_point, {})
 
-    def test_regularizer_allocates_snapshots_only_when_enabled(self):
-        model, _, _ = make_captioner_fixture()
-        logits = torch.randn(2, 3, 24, requires_grad=True)
-        target = torch.ones(2, 3, dtype=torch.long)
-        mask = torch.ones(2, 3)
-        plain = model.loss_caption(logits, target, mask)
-        self.assertEqual(model.reference_point, {})
-        regularized = model.loss_caption(logits, target, mask, reg=0.5)
-        self.assertTrue(model.reference_point)
-        torch.testing.assert_close(plain, regularized)
-        with torch.no_grad():
-            model.latent_query.weight.add_(1)
-        self.assertGreater(model.loss_caption(logits, target, mask, reg=0.5).item(), plain.item())
-
-    def test_instruction_geometry_fusion_trains_and_preserves_cached_predictions(self):
-        model, detector, inputs = make_captioner_fixture(fusion_method="instruction", neighbor_selection="geometry")
+    def test_gated_fusion_trains_and_preserves_cached_predictions(self):
+        model, detector, inputs = make_captioner_fixture(fusion_method="gated")
         model.train()
         optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
-        # The gate starts with zero weights; context projection receives its
-        # first gradient after the gate learns to use context on step one.
         for _ in range(2):
             optimizer.zero_grad()
             output = model.forward_training(dict(detector), inputs)
             (output["loss"] + 0.1 * output["l_loss"] + 0.01 * output["g_loss"]).backward()
             optimizer.step()
-        for parameter in (model.en_slic.update_gate.weight, model.en_slic.distance_strength,
-                          model.instruction_to_scene[-1].weight):
-            self.assertIsNotNone(parameter.grad)
-            self.assertTrue(torch.isfinite(parameter.grad).all())
-            self.assertGreater(parameter.grad.abs().sum().item(), 0)
+        gate = model.en_slic.update_gate.weight
+        self.assertTrue(torch.isfinite(gate.grad).all())
+        self.assertGreater(gate.grad.abs().sum().item(), 0)
         model.eval()
         with torch.no_grad():
             expected = uncached_densecap(model, detector, inputs, "dense-cap")
@@ -213,26 +190,10 @@ class CaptionerRegressionTests(unittest.TestCase):
         torch.testing.assert_close(actual["l_loss"], expected[1])
         torch.testing.assert_close(actual["g_loss"], expected[2])
 
-    def test_instruction_fusion_ignores_padding_and_response_tokens(self):
-        model, detector, inputs = make_captioner_fixture(fusion_method="instruction")
-        with torch.no_grad():
-            # Activate context weights to exercise masking beyond initialization.
-            model.en_slic.update_gate.weight.normal_(std=0.1)
-            expected = model._prepare_scene_features(detector, inputs)[0]
-            padded = dict(inputs)
-            padded["qformer_input_ids"] = torch.cat([inputs["qformer_input_ids"], torch.full((2, 1), 19)], dim=1)
-            padded["qformer_attention_mask"] = torch.cat([inputs["qformer_attention_mask"], torch.zeros(2, 1)], dim=1)
-            padded["input_ids"] = torch.zeros_like(inputs["input_ids"])
-            actual = model._prepare_scene_features(detector, padded)[0]
-            changed = dict(inputs, qformer_input_ids=torch.full_like(inputs["qformer_input_ids"], 20))
-            different_instruction = model._prepare_scene_features(detector, changed)[0]
-        torch.testing.assert_close(actual, expected)
-        self.assertGreater((different_instruction - expected).abs().max().item(), 1e-6)
-
     def test_inference_skips_graph_losses_without_changing_captions(self):
-        for fusion, neighbors in (("baseline", "hilbert"), ("instruction", "geometry")):
+        for fusion in ("baseline", "gated"):
             with self.subTest(fusion=fusion), torch.no_grad():
-                model, detector, inputs = make_captioner_fixture(fusion_method=fusion, neighbor_selection=neighbors)
+                model, detector, inputs = make_captioner_fixture(fusion_method=fusion)
                 original_forward = model.en_slic.forward
 
                 def with_training_losses(*args, **kwargs):
@@ -249,7 +210,7 @@ class CaptionerRegressionTests(unittest.TestCase):
 
     @unittest.skipUnless(torch.distributed.is_available() and torch.distributed.is_gloo_available(),
                          "Gloo is required for the distributed fusion test")
-    def test_two_process_instruction_fusion_backward(self):
+    def test_two_process_gated_fusion_backward(self):
         with tempfile.TemporaryDirectory() as directory:
             rendezvous = "file://" + os.path.join(directory, "rendezvous")
             torch.multiprocessing.spawn(run_distributed_fusion_steps, args=(rendezvous,), nprocs=2, join=True)

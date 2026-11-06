@@ -8,6 +8,7 @@ where (cx,cy,cz) is the center point of the box, dx is the x-axis length of the 
 """
 import multiprocessing as mp
 import os
+import random
 
 import h5py
 import numpy as np
@@ -18,10 +19,18 @@ from libs.pc_utils import scale_points, shift_scale_points
 from libs.random_cuboid import RandomCuboid
 from libs.lib_spts import num_to_natural_numpy
 
+
+def draw_box_prompt(box_prompt_ratio):
+    """One uniform draw: True prompts with the object's box, False with a click.
+
+    With ratio 0.5 this is LL3DA's `random.random() > 0.5`, so the default keeps
+    the original choices; ratio 1.0 always prompts with the box.
+    """
+    return random.random() > 1.0 - box_prompt_ratio
+
 IGNORE_LABEL = -100
 MEAN_COLOR_RGB = np.array([109.8, 97.2, 83.8])
 BASE = "."  ## Replace with path to dataset
-# root_dir = '/storage2/TEV/datasets/ScanNet/ll3da'
 DATASET_METADATA_DIR = os.path.join(BASE, "datasets", "scannet", "meta_data")
 
 
@@ -42,7 +51,6 @@ class ScanNetBaseDataset(Dataset):
     ):
 
         self.dataset_config = dataset_config
-        self.kl_attention_loss = getattr(args, 'kl_attention_loss', False) and split_set == 'train'
         # assert split_set in ["train", "val"]
 
         root_dir = args.root_dir
@@ -95,7 +103,7 @@ class ScanNetBaseDataset(Dataset):
     def __len__(self):
         return len(self.scan_names)
 
-    def _get_scan_data(self, scan_name, grounding_object_ids=None):
+    def _get_scan_data(self, scan_name):
         mesh_vertices = np.load(os.path.join(self.data_path, scan_name) + "_aligned_vert.npy")
         instance_labels = np.load(
             os.path.join(self.data_path, scan_name) + "_ins_label.npy"
@@ -234,13 +242,6 @@ class ScanNetBaseDataset(Dataset):
         ret_dict["point_clouds"] = point_cloud.astype(np.float32)
         spts = spt_labels[:, None]
         ret_dict["spts"] = spts.astype(np.int64)
-        if self.kl_attention_loss:
-            # ScanNet instance labels are one-based; annotation IDs are zero-based.
-            object_ids_for_grounding = np.asarray(
-                [] if grounding_object_ids is None else grounding_object_ids, dtype=np.int64,
-            ).reshape(-1)
-            object_ids_for_grounding = object_ids_for_grounding[object_ids_for_grounding >= 0]
-            ret_dict['grounding_point_mask'] = np.isin(instance_labels, object_ids_for_grounding + 1)
         ret_dict["gt_box_corners"] = box_corners.astype(np.float32)
         ret_dict["gt_box_centers"] = box_centers.astype(np.float32)
         ret_dict["gt_box_centers_normalized"] = box_centers_normalized.astype(
@@ -293,24 +294,3 @@ class ScanNetBaseDataset(Dataset):
         ret_dict = self._get_scan_data(scan_name)
         ret_dict["scan_idx"] = np.array(idx).astype(np.int64)
         return ret_dict
-
-
-if __name__ == '__main__':
-    from libs.lib_vis import visualize_clusters
-
-    data_path = '/data/disk1/data/scannet/scannet_llm'
-    scan_name = 'scene0606_01'
-    mesh_vertices = np.load(os.path.join(data_path, scan_name) + "_aligned_vert.npy")
-    instance_labels = np.load(
-        os.path.join(data_path, scan_name) + "_ins_label.npy"
-    )
-    semantic_labels = np.load(
-        os.path.join(data_path, scan_name) + "_sem_label.npy"
-    )
-    instance_bboxes = np.load(os.path.join(data_path, scan_name) + "_aligned_bbox.npy")
-
-    spt_labels = np.load(os.path.join(data_path, scan_name) + "_spt.npy")
-    spt_labels = num_to_natural_numpy(spt_labels, -1)
-    visualize_clusters(mesh_vertices[:, :3], spt_labels.reshape(-1), scan_name)
-    visualize_clusters(mesh_vertices[:, :3], instance_labels.reshape(-1), 'instance')
-    # vis_points(mesh_vertices[:,:3], scan_name)

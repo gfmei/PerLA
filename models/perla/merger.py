@@ -30,14 +30,11 @@ class LearnCut(nn.Module):
     """
 
     def __init__(self, encoder_dim, hidden_dims, n_neighs, n_clus=64, n_split=4, radius=1.5, tau=1e-1,
-                 fusion_method="baseline", neighbor_selection="hilbert"):
+                 fusion_method="baseline"):
         super().__init__()
-        if fusion_method not in {"baseline", "gated", "instruction"}:
+        if fusion_method not in {"baseline", "gated"}:
             raise ValueError(f"Unknown fusion method: {fusion_method}")
-        if neighbor_selection not in {"hilbert", "geometry"}:
-            raise ValueError(f"Unknown neighbor selection: {neighbor_selection}")
         self.fusion_method = fusion_method
-        self.neighbor_selection = neighbor_selection
         self.tau = tau  # Temperature parameter for softmax
         self.n_neighs = max(n_neighs, 4*n_split)
         self.n_split = n_split
@@ -86,47 +83,37 @@ class LearnCut(nn.Module):
         )
         self.cut_pool = MinCutPoolingLayer(encoder_dim, hidden_dims, n_clus, tau)
 
-        if fusion_method != "baseline":
-            gate_inputs = 3 if fusion_method == "instruction" else 2
-            self.update_gate = nn.Linear(gate_inputs * encoder_dim, encoder_dim)
+        if fusion_method == "gated":
+            self.update_gate = nn.Linear(2 * encoder_dim, encoder_dim)
             # Start near the pretrained global features, while leaving a
             # nonzero path for local features to receive gradients immediately.
             nn.init.zeros_(self.update_gate.weight)
             nn.init.constant_(self.update_gate.bias, -2.0)
-        if neighbor_selection == "geometry":
-            self.distance_strength = nn.Parameter(torch.tensor(0.0))
-            self.segment_strength = nn.Parameter(torch.tensor(0.0))
 
     def select_neighbors(self, sp_xyz, p_xyz, sp_segs, p_segs):
-        """Bound candidate search by Hilbert keys, optionally rerank in 3D."""
+        """Approximate nearest local points of every superpoint along a 3D Hilbert curve."""
         if not 1 <= self.n_neighs <= p_xyz.size(1):
             raise ValueError("The local point count must be at least the configured neighbor count")
         grid, _, _ = quantise_to_grid(torch.cat([p_xyz, sp_xyz], dim=1), bits=self.bits)
         p_int, q_int = grid.split([p_xyz.size(1), sp_xyz.size(1)], dim=1)
-        candidate_count = self.n_neighs
-        if self.neighbor_selection == "geometry":
-            candidate_count = min(p_xyz.size(1), 4 * self.n_neighs)
         _, indices, same_label = self.hilbert.approx_knn_hilbert_batch(
-            p_int, q_int, p_segs, sp_segs, K=candidate_count, search_window=2 * candidate_count)
-        if self.neighbor_selection == "geometry":
-            batch = torch.arange(p_xyz.size(0), device=p_xyz.device)[:, None, None]
-            squared_distance = (p_xyz[batch, indices] - sp_xyz.unsqueeze(2)).square().sum(-1)
-            nearest = squared_distance.topk(self.n_neighs, dim=-1, largest=False).indices
-            indices = indices.gather(2, nearest)
-            same_label = same_label.gather(2, nearest)
+            p_int, q_int, p_segs, sp_segs, K=self.n_neighs, search_window=2 * self.n_neighs)
         return indices, same_label
 
-    def fuse_features(self, global_features, local_features, instruction_context=None):
+    def fuse_features(self, global_features, local_features):
+        """Baseline: use the local update directly. Gated: a learned per-channel blend."""
         if self.fusion_method == "baseline":
             return local_features
         gate_features = [F.layer_norm(global_features, (self.encoder_dim,)),
                          F.layer_norm(local_features, (self.encoder_dim,))]
-        if self.fusion_method == "instruction":
-            if instruction_context is None:
-                raise ValueError("Instruction fusion requires instruction_context")
-            gate_features.append(instruction_context.unsqueeze(1).expand_as(global_features))
         gate = torch.sigmoid(self.update_gate(torch.cat(gate_features, dim=-1)))
         return global_features + gate * (local_features - global_features)
+
+    def consistency(self, features, reference):
+        """Per-key direction mismatch, summed over keys."""
+        return torch.norm(
+            F.normalize(features, dim=-1) - F.normalize(reference, dim=-1), p=2, dim=-1
+        ).sum(1).mean() / self.encoder_dim
 
     def min_cut(self, xyz, fea, new_fea):
         # Construct adjacency matrix (requires definition)
@@ -140,8 +127,7 @@ class LearnCut(nn.Module):
 
         return loss
 
-    def forward(self, sp_fea, sp_xyz, p_fea, p_xyz, sp_segs, p_segs, instruction_context=None,
-                compute_auxiliary_losses=True):
+    def forward(self, sp_fea, sp_xyz, p_fea, p_xyz, sp_segs, p_segs, compute_auxiliary_losses=True):
         """
         Forward pass for the Learnable SLIC algorithm.
         Args:
@@ -173,33 +159,22 @@ class LearnCut(nn.Module):
         neigh_pos = self.nei_pos_embed(neigh_pos)
 
         # -------------------------------------------------------------
-        # 3) attention with hard or learned soft segment preference
+        # 3) attention restricted to neighbors in the same segment
         # -------------------------------------------------------------
         mask = same_label_mask.to(dtype=torch.bool)
         attn_logits = torch.einsum('bnd,bnkd->bnk',  # (B,n,K)
                                    self.q_weight(sp_fea + pos_emd),
                                    self.k_weight(neigh_fea + neigh_pos)
                                    ) / np.sqrt(self.encoder_dim)
-
-        if self.neighbor_selection == "geometry":
-            distance_squared = relative_xyz.square().sum(-1)
-            scale = distance_squared.mean(-1, keepdim=True).detach().clamp_min(1e-6)
-            # A soft segment prior retains context across superpoint boundaries.
-            attn_logits = (attn_logits - F.softplus(self.distance_strength) * distance_squared / scale
-                           + F.softplus(self.segment_strength) * same_label_mask.to(attn_logits.dtype))
-        else:
-            mask_any = mask.any(dim=-1, keepdim=True)  # (B,n,1)
-            attn_logits = torch.where(mask_any, attn_logits.masked_fill(~mask, -1e9), attn_logits)
+        mask_any = mask.any(dim=-1, keepdim=True)  # (B,n,1)
+        attn_logits = torch.where(mask_any, attn_logits.masked_fill(~mask, -1e9), attn_logits)
         attn = torch.softmax(attn_logits, dim=-1)  # (B,n,K)
         attn_fea = torch.einsum('bnk,bnkd->bnd',
                                 attn,
                                 self.norm1(self.v_weight(neigh_fea + neigh_pos)))
-        # Concatenate the old and new features for projection
-        if torch.isnan(attn_fea).any().item():  # .item() forces sync & avoids device assert
-            print("[WARN] NaNs in attn_fea")
 
         local_proposal = self.projection(self.norm2(attn_fea + sp_fea))
-        sp_fea_new = self.fuse_features(sp_fea, local_proposal, instruction_context)
+        sp_fea_new = self.fuse_features(sp_fea, local_proposal)
         if not compute_auxiliary_losses:
             # Graph construction and Sinkhorn assignments only supervise
             # training; neither contributes to the feature passed to Q-Former.
@@ -207,12 +182,7 @@ class LearnCut(nn.Module):
             return sp_fea_new, zero, zero
         # Apply MinCut pooling
         l_cut_loss = self.min_cut(sp_xyz, sp_fea, sp_fea_new)
-        l_fit_loss = torch.norm(
-            F.normalize(F.leaky_relu(attn_fea), dim=-1) - F.normalize(sp_fea, dim=-1), p=2, dim=-1
-        ).sum(1).mean() / self.encoder_dim
+        l_fit_loss = self.consistency(F.leaky_relu(attn_fea), sp_fea)
         l_loss = l_fit_loss + l_cut_loss
-        
-        g_loss = torch.norm(
-            F.normalize(sp_fea_new, dim=-1) - F.normalize(sp_fea, dim=-1), p=2, dim=-1
-        ).sum(1).mean() / self.encoder_dim
+        g_loss = self.consistency(sp_fea_new, sp_fea)
         return sp_fea_new, l_loss, g_loss

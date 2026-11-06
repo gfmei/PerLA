@@ -6,7 +6,7 @@ from copy import deepcopy
 import numpy as np
 from transformers import AutoTokenizer
 
-from datasets.scannet_base_dataset import BASE, ScanNetBaseDataset
+from datasets.scannet_base_dataset import BASE, ScanNetBaseDataset, draw_box_prompt
 from datasets.task_prompts import TASK_PROPMT, BOX_FORMAT
 from eval_utils.evaluate_densecap import evaluate
 
@@ -41,6 +41,9 @@ class Dataset(ScanNetBaseDataset):
         self.task_name = 'scanrefer'
         self.grid_size_3d = args.grid_size_3d
         self.max_prompts = args.max_prompts
+        # Share of training samples prompted with the object's box rather than a click.
+        # Dense-captioning evaluation prompts with boxes only; 0.5 is LL3DA's recipe.
+        self.box_prompt_ratio = getattr(args, 'box_prompt_ratio', 0.5)
         self.split = split_set
         self.dataset_config = dataset_config
         self.max_des_len = args.max_des_len
@@ -99,10 +102,7 @@ class Dataset(ScanNetBaseDataset):
 
         scan_name = self.annotations[idx]['scene_id']
         task_name = self.annotations[idx]['task_name']
-        ret_dict = self._get_scan_data(
-            scan_name, grounding_object_ids=[int(self.annotations[idx]['object_id'])]
-            if self.split == 'train' else None,
-        )
+        ret_dict = self._get_scan_data(scan_name)
 
         if self.split == 'train':
             prompt = deepcopy(random.choice(TASK_PROPMT[task_name]))
@@ -135,7 +135,7 @@ class Dataset(ScanNetBaseDataset):
             click_query = np.zeros((self.max_prompts, 3))
             click_mask = np.zeros((self.max_prompts,))
 
-            if random.random() > 0.5:
+            if draw_box_prompt(self.box_prompt_ratio):
                 # use box to identify an object
                 ref_gt_box_corner = \
                     ret_dict["gt_box_corners"][match_mask == 1].reshape(8, 3).astype(np.float32)

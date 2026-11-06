@@ -116,29 +116,15 @@ def validate_model_configuration(args, checkpoint):
     if saved is None:
         return
     saved = vars(saved) if isinstance(saved, argparse.Namespace) else saved
-    defaults = {"fusion_method": "baseline", "neighbor_selection": "hilbert"}
-    for name in ("fusion_method", "neighbor_selection", "n_splits", "n_neighs", "nlatent_query"):
+    defaults = {"fusion_method": "baseline", "qformer_rope": False, "box_part_tokens": False,
+                "context_objects": 0}
+    for name in ("fusion_method", "qformer_rope", "box_part_tokens", "context_objects",
+                 "n_splits", "n_neighs", "nlatent_query"):
         if hasattr(args, name) and (name in saved or name in defaults):
             expected = saved.get(name, defaults.get(name))
             if getattr(args, name) != expected:
                 raise ValueError(f"Checkpoint requires --{name} {expected}; got {getattr(args, name)}. "
                                  "To change architecture, warm-start in a fresh output directory.")
-
-
-def validate_grounding_configuration(args, checkpoint):
-    """Resume the same objective; warm-starts and inference remain unrestricted."""
-    saved = checkpoint.get('args')
-    saved = vars(saved) if isinstance(saved, argparse.Namespace) else (saved or {})
-    defaults = {'kl_attention_loss': False, 'kl_attention_weight': 1.0,
-                'kl_attention_smoothing': 0.05}
-    names = ['kl_attention_loss']
-    if getattr(args, 'kl_attention_loss', False):
-        names.extend(['kl_attention_weight', 'kl_attention_smoothing'])
-    for name in names:
-        expected = saved.get(name, defaults[name])
-        if getattr(args, name, defaults[name]) != expected:
-            raise ValueError(f"Checkpoint requires --{name} {expected}; "
-                             "warm-start in a fresh output directory to change the KL objective.")
 
 
 def resume_if_possible(checkpoint_dir, model_no_ddp, optimizer, args=None):
@@ -159,7 +145,6 @@ def resume_if_possible(checkpoint_dir, model_no_ddp, optimizer, args=None):
     sd = load_checkpoint(last_checkpoint)
     if args is not None:
         validate_model_configuration(args, sd)
-        validate_grounding_configuration(args, sd)
     epoch = sd["epoch"]
     best_val_metrics = sd["best_val_metrics"]
     print(f"Found checkpoint at {epoch}. Resuming.")

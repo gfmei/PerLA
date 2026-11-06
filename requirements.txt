@@ -1,0 +1,10 @@
+# PyTorch 2.2 (CUDA 12.1) is installed separately; see the README.
+transformers==4.40.2
+huggingface_hub>=0.23
+numpy==1.23.1
+scipy==1.13.1
+h5py
+easydict
+addict
+plyfile
+cython

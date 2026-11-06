@@ -14,7 +14,6 @@ sys.path.append(os.path.join(cwd, 'libs'))
 from datasets.dloader import build_dataset
 from models.perla.engine import do_train
 from models.perla.model_general import CaptionNet
-from models.perla.attention_grounding import validate_grounding_settings
 from libs.dist import init_distributed, is_distributed, get_rank
 from libs.misc import (load_checkpoint, load_model_state, resume_if_possible,
                        seed_everything, validate_model_configuration)
@@ -49,10 +48,25 @@ def make_args_parser(argv=None):
     parser.add_argument("--n_splits", default=4, type=int)
     parser.add_argument("--n_clus", default=128, type=int)
     parser.add_argument("--nlatent_query", default=32, type=int)
-    parser.add_argument("--fusion_method", choices=("baseline", "gated", "instruction"), default="baseline",
-                        help="Local/global fusion: original, adaptive gate, or instruction-conditioned gate")
-    parser.add_argument("--neighbor_selection", choices=("hilbert", "geometry"), default="hilbert",
-                        help="Hilbert neighbors or geometric reranking with spatial attention bias")
+    parser.add_argument("--fusion_method", choices=("baseline", "gated"), default="baseline",
+                        help="Local/global fusion: replace the global keys with the local update "
+                             "(paper), or blend them with a learned gate")
+    parser.add_argument("--qformer_rope", default=False, action="store_true",
+                        help="Interleaved 3D rotary position in the Q-Former cross-attention for "
+                             "point-cloud tokens (visual prompts and scene keys); latent queries "
+                             "attend by content only")
+    parser.add_argument("--box_prompt_ratio", default=0.5, type=float,
+                        help="Dense captioning: share of training samples prompted with the object's box "
+                             "instead of a click (evaluation uses boxes only; LL3DA uses 0.5)")
+    parser.add_argument("--min_box_prompt_iou", default=0.0, type=float,
+                        help="Drop the caption loss of training samples whose box prompt matches no "
+                             "foreground proposal at this IoU (0 keeps every sample)")
+    parser.add_argument("--box_part_tokens", default=False, action="store_true",
+                        help="Add eight part tokens per box prompt: local encoder features pooled in each "
+                             "octant of the box, at their own positions for 3D rotary attention")
+    parser.add_argument("--context_objects", default=0, type=int,
+                        help="Add one prompt token for each of this many nearest other detected objects "
+                             "(detector feature plus offset from the prompted object)")
 
     parser.add_argument("--detector", default="perla", help="folder of the detector")
     parser.add_argument("--captioner", default=None, type=str, help="folder of the captioner")
@@ -82,8 +96,12 @@ def make_args_parser(argv=None):
     ##### Dataset #####
     parser.add_argument("--max_prompts", default=16, type=int, help="number of visual interactions")
     parser.add_argument("--dataset", default='scannet', help="dataset list split by ','")
-    # root_dir = '/storage2/TEV/datasets/ScanNet/perla'
-    parser.add_argument("--root_dir", default='/data/disk1/data/scannet/scannet_llm', help="dataset root")
+    parser.add_argument("--eval_dataset", default=None,
+                        help="validation dataset list split by ','; defaults to --dataset")
+    parser.add_argument("--skip_unprepared_scenes", default=False, action="store_true",
+                        help="drop training annotations whose scenes are absent from --root_dir")
+    parser.add_argument("--root_dir", default='data/scannet/scannet_data',
+                        help="prepared ScanNet scenes (see datasets/scannet/batch_load_scannet_data.py)")
     parser.add_argument("--grid_size_3d", default=255, type=int, help="grid size of the 3D scene")
     parser.add_argument('--vocab', default="llama-hf/7B", type=str, help="The LLM backend")
     parser.add_argument('--qformer_vocab', default="bert-base-uncased", type=str, help="The QFormer backend")
@@ -105,10 +123,6 @@ def make_args_parser(argv=None):
                         help="Weight of the local auxiliary loss (0 disables its gradient)")
     parser.add_argument("--global_loss_weight", default=1.0, type=float,
                         help="Weight of the global auxiliary loss (0 disables its gradient)")
-    parser.add_argument("--kl_attention_loss", action="store_true",
-                        help="Supervise Q-Former spatial attention with annotated object regions")
-    parser.add_argument("--kl_attention_weight", default=1.0, type=float)
-    parser.add_argument("--kl_attention_smoothing", default=0.05, type=float)
 
     ##### Testing #####
     parser.add_argument("--test_only", default=False, action="store_true")
@@ -136,9 +150,12 @@ def make_args_parser(argv=None):
     args.use_height = not args.no_height
     if args.stop_epoch is not None and not 0 < args.stop_epoch <= args.max_epoch:
         parser.error("--stop_epoch must be in [1, max_epoch]")
-    validate_grounding_settings(args.kl_attention_weight, args.kl_attention_smoothing)
-    if args.kl_attention_loss and args.captioner is None:
-        parser.error("--kl_attention_loss requires --captioner perla")
+    if not 0 <= args.box_prompt_ratio <= 1:
+        parser.error("--box_prompt_ratio must be in [0, 1]")
+    if not 0 <= args.min_box_prompt_iou < 1:
+        parser.error("--min_box_prompt_iou must be in [0, 1)")
+    if args.context_objects < 0:
+        parser.error("--context_objects cannot be negative")
 
     return args
 

@@ -34,6 +34,22 @@ def build_dataloader_func(args, dataset, split):
     return sampler, dataloader
 
 
+SCENE_FILES = ('_aligned_vert.npy', '_ins_label.npy', '_sem_label.npy', '_aligned_bbox.npy', '_spt.npy')
+
+
+def skip_unprepared_scenes(dataset, root_dir):
+    """Drop training annotations whose scene files are absent, reporting the count."""
+    files = set(os.listdir(root_dir))
+    scenes = {anno['scene_id'] for anno in dataset.annotations}
+    missing = {scene for scene in scenes
+               if any(scene + suffix not in files for suffix in SCENE_FILES)}
+    if missing:
+        kept = [anno for anno in dataset.annotations if anno['scene_id'] not in missing]
+        print(f"skipped {len(dataset.annotations) - len(kept)} {dataset.task_name} annotations "
+              f"from unprepared scenes {sorted(missing)}")
+        dataset.annotations = kept
+
+
 def build_dataset(args):
     from datasets.data_config import DatasetConfig
 
@@ -41,9 +57,9 @@ def build_dataset(args):
     datasets = {'train': None, 'test': []}
 
     train_datasets = []
-    for dataset in args.dataset.split(','):
-        dataset_module = importlib.import_module(f'datasets.{dataset}')
-        if not args.test_only:
+    if not args.test_only:
+        for dataset in args.dataset.split(','):
+            dataset_module = importlib.import_module(f'datasets.{dataset}')
             train_datasets.append(
                 dataset_module.Dataset(
                     args,
@@ -56,6 +72,11 @@ def build_dataset(args):
                     augment=True
                 )
             )
+            if getattr(args, 'skip_unprepared_scenes', False):
+                skip_unprepared_scenes(train_datasets[-1], args.root_dir)
+    # Validation may cover fewer tasks than training, e.g. ScanQA for a generalist.
+    for dataset in (getattr(args, 'eval_dataset', None) or args.dataset).split(','):
+        dataset_module = importlib.import_module(f'datasets.{dataset}')
         datasets['test'].append(
             dataset_module.Dataset(
                 args,

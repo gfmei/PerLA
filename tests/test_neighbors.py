@@ -70,21 +70,7 @@ class HilbertNeighborTests(unittest.TestCase):
         self.check_neighbors([[0, 1, 2, 3, 4, 100, 200, 300]], [[5]], k=3, window=3)
 
 
-class MergerGeometryTests(unittest.TestCase):
-    def test_geometry_reranks_candidates_by_actual_distance(self):
-        merger = LearnCut(16, 16, n_neighs=4, n_clus=4, n_split=1, neighbor_selection="geometry")
-        distances = torch.tensor([50., 40., 30., 20., 4., 3., 2., 1.])
-        points = torch.stack([distances, torch.zeros(8), torch.zeros(8)], dim=-1).unsqueeze(0)
-        queries = torch.zeros(1, 1, 3)
-        source_labels = torch.arange(8).unsqueeze(0) % 2
-        # Simulate Hilbert keys placing the geometrically farthest points first.
-        candidates = torch.arange(8).view(1, 1, 8)
-        mask = (source_labels[:, None, :] == 0).long()
-        with patch.object(merger.hilbert, "approx_knn_hilbert_batch", return_value=(None, candidates, mask)):
-            indices, same_label = merger.select_neighbors(queries, points, torch.zeros(1, 1), source_labels)
-        torch.testing.assert_close(indices, torch.tensor([[[7, 6, 5, 4]]]))
-        torch.testing.assert_close(same_label, torch.tensor([[[0, 1, 0, 1]]]))
-
+class MergerTests(unittest.TestCase):
     def test_gate_can_preserve_global_or_select_local_features(self):
         merger = LearnCut(16, 16, n_neighs=4, n_clus=4, n_split=1, fusion_method="gated")
         global_features, local_features = torch.randn(2, 3, 16), torch.randn(2, 3, 16)

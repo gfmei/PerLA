@@ -31,10 +31,12 @@ def reference_fps(xyz, n_point, is_center=False):
 
 
 def reference_ball(radius, nsample, xyz, new_xyz):
+    """CUDA ball_query: the first nsample points (input order) within radius."""
     batch, count, _ = xyz.shape
     queries = new_xyz.shape[1]
     indices = torch.arange(count, device=xyz.device).view(1, 1, count).repeat(batch, queries, 1)
-    indices[torch.cdist(new_xyz, xyz) > radius ** 2] = count
+    squared = ((new_xyz[:, :, None] - xyz[:, None]) ** 2).sum(-1)
+    indices[squared > radius ** 2] = count
     indices = indices.sort(dim=-1).values[:, :, :nsample]
     first = indices[:, :, :1].repeat(1, 1, nsample)
     mask = indices == count
@@ -56,11 +58,17 @@ class PointSamplingTests(unittest.TestCase):
                 self.assertTrue(torch.equal(expected, actual))
                 self.assertTrue(torch.equal(expected_rng, torch.get_rng_state()))
 
-    def test_ball_preserves_original_radius_and_padding(self):
+    def test_ball_uses_metric_radius(self):
+        # The detector tokenizer groups within 0.2 m. Comparing plain distances with
+        # radius**2 used to shrink this ball to 0.04 m and broke the frozen detector.
+        xyz = torch.tensor([[[0., 0., 0.], [.1, 0., 0.], [.19, 0., 0.], [.25, 0., 0.]]])
+        self.assertEqual(query_ball_point(.2, 4, xyz, xyz[:, :1]).tolist(), [[[0, 1, 2, 0]]])
+
+    def test_ball_matches_cuda_semantics_and_padding(self):
         xyz = torch.tensor([[[0., 0., 0.], [.1, 0., 0.], [.3, 0., 0.],
                              [.3, 0., 0.], [1., 0., 0.], [2., 0., 0.]]])
         queries = torch.cat((xyz, torch.full((1, 1, 3), 100.)), dim=1)
-        for radius in (0., .5, 1., 100.):
+        for radius in (0., .2, .5, 1., 100.):
             for count in (1, 3, 6):
                 expected = reference_ball(radius, count, xyz, queries)
                 actual = query_ball_point(radius, count, xyz, queries)

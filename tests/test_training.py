@@ -20,7 +20,7 @@ class TinyModel(torch.nn.Module):
     def __init__(self, auxiliary_losses=True):
         super().__init__()
         self.weight = torch.nn.Parameter(torch.tensor(1.0))
-        self.captioner = SimpleNamespace(update_reference_point=Mock())
+        self.captioner = SimpleNamespace()
         self.training_modes = []
         self.auxiliary_losses = auxiliary_losses
 
@@ -179,24 +179,14 @@ class TrainingRegressionTests(unittest.TestCase):
         self.run_training(model)
         self.assertAlmostEqual(model.weight.item(), 0.9, places=6)
 
-    def test_grounding_loss_is_logged_without_adding_it_twice(self):
-        class GroundedModel(TinyModel):
-            def forward(self, batch, is_eval=False):
-                outputs = super().forward(batch, is_eval)
-                outputs['kl_attention_loss'] = 4 * self.weight
-                outputs['kl_attention_supervised_fraction'] = self.weight.new_tensor(0.5)
-                outputs['loss'] = outputs['loss'] + 0.5 * outputs['kl_attention_loss']
-                return outputs
-
-        model = GroundedModel()
+    def test_metrics_are_reduced_in_one_detached_collective(self):
+        model = TinyModel()
         reduced = []
         def record(values):
             reduced.append(values.clone())
             return values
-        self.run_training(model, training_args(kl_attention_loss=True, kl_attention_weight=0.5), reduce=record)
-        # Gradient: language 1 + local 2 + global 3 + weighted KL 2.
-        self.assertAlmostEqual(model.weight.item(), 0.2, places=6)
-        torch.testing.assert_close(reduced[0], torch.tensor([8., 2., 3., 4., 0.5]))
+        self.run_training(model, reduce=record)
+        torch.testing.assert_close(reduced[0], torch.tensor([6., 2., 3.]))
         self.assertFalse(reduced[0].requires_grad)
 
     def test_auxiliary_loss_weights_control_training_gradients(self):
@@ -207,18 +197,6 @@ class TrainingRegressionTests(unittest.TestCase):
                     local_loss_weight=local_weight, global_loss_weight=global_weight,
                 ))
                 self.assertAlmostEqual(model.weight.item(), expected, places=6)
-
-    def test_inactive_regularizer_does_not_copy_parameters(self):
-        model = TinyModel()
-        model.captioner.reference_point = {}
-        self.run_training(model)
-        model.captioner.update_reference_point.assert_not_called()
-
-    def test_active_regularizer_updates_parameter_snapshots(self):
-        model = TinyModel()
-        model.captioner.reference_point = {"weight": model.weight.detach().clone()}
-        self.run_training(model)
-        model.captioner.update_reference_point.assert_called_once()
 
     def test_saved_checkpoint_can_resume_model_and_optimizer(self):
         model = torch.nn.Linear(1, 1)
@@ -275,10 +253,12 @@ class InitializationTests(unittest.TestCase):
             load_model_state(model, weights, require_captioner=True)
 
     def test_checkpoint_architecture_must_match_evaluation_or_resume(self):
-        args = argparse.Namespace(fusion_method="instruction", neighbor_selection="geometry", n_splits=6)
-        checkpoint = {"args": argparse.Namespace(fusion_method="instruction", neighbor_selection="geometry", n_splits=6)}
+        args = argparse.Namespace(fusion_method="gated", qformer_rope=True, box_part_tokens=True,
+                                  context_objects=8, n_splits=6)
+        checkpoint = {"args": argparse.Namespace(**vars(args))}
         validate_model_configuration(args, checkpoint)
-        for field, value in (("fusion_method", "baseline"), ("neighbor_selection", "hilbert"), ("n_splits", 4)):
+        for field, value in (("fusion_method", "baseline"), ("qformer_rope", False), ("box_part_tokens", False),
+                             ("context_objects", 0), ("n_splits", 4)):
             with self.subTest(field=field):
                 mismatched = argparse.Namespace(**vars(args))
                 setattr(mismatched, field, value)
@@ -287,7 +267,7 @@ class InitializationTests(unittest.TestCase):
 
     def test_legacy_checkpoint_defaults_to_baseline_fusion(self):
         checkpoint = {"args": argparse.Namespace(n_splits=4)}
-        args = argparse.Namespace(fusion_method="instruction")
+        args = argparse.Namespace(fusion_method="gated")
         with self.assertRaisesRegex(ValueError, "--fusion_method baseline"):
             validate_model_configuration(args, checkpoint)
 

@@ -1,4 +1,11 @@
-"""Run restartable full ScanQA training, recording every validation epoch."""
+"""Resumable training with full validation after every epoch.
+
+Wraps main.py for ScanQA, ScanRefer and Nr3D (or a multi-task mixture validated on one
+of them). Training can run in stages (--stop_epoch) while keeping the full --max_epoch
+learning-rate schedule; each stage checks that it resumes where the previous one ended.
+Every epoch's predictions and metrics are kept under <checkpoint_dir>/evaluations/,
+and summary.json records the best and final epochs.
+"""
 
 import argparse
 import hashlib
@@ -21,6 +28,32 @@ import main as entrypoint
 from datasets.dloader import build_dataloader_func
 from libs.dist import get_rank, is_primary
 from libs.misc import seed_everything
+
+
+TRAIN_ANNOTATIONS = {
+    'unified_scanqa': 'data/ScanQA/ScanQA_v1.0_train.json',
+    'unified_densecap_scanrefer': 'data/ScanRefer/ScanRefer_filtered_train.json',
+    'unified_densecap_nr3d': 'data/Nr3D/nr3d_train.json',
+    'unified_3dllm_scene_description': 'data/3D_LLM/3d_llm_scene_description_train.json',
+    'unified_3dllm_embodied_dialogue': 'data/3D_LLM/3d_llm_embodied_dialogue_filtered_train.json',
+    'unified_3dllm_embodied_planning': 'data/3D_LLM/3d_llm_embodied_planning_filtered_train.json',
+}
+# Validation annotations and the prefix of the prediction files each evaluator writes.
+VALIDATION = {
+    'unified_scanqa': ('data/ScanQA/ScanQA_v1.0_val.json', 'qa_'),
+    'unified_densecap_scanrefer': ('data/ScanRefer/ScanRefer_filtered_val.json', 'scanrefer_densecap_'),
+    'unified_densecap_nr3d': ('data/Nr3D/nr3d_val.json', 'nr3d_densecap_'),
+}
+
+
+def validation_setup(name, test_min_iou):
+    """Return validation annotations, evaluator output files and selection criterion."""
+    annotations, prefix = VALIDATION[name]
+    outputs = tuple(f'{prefix}{kind}_val.json' for kind in ('corpus', 'pred', 'pred_gt'))
+    # Dense-captioning metrics are keyed by IoU threshold, e.g. 'CiDEr@0.5'. A missing
+    # key is swallowed by the training loop and no best checkpoint is ever saved.
+    criterion = 'CiDEr' if name == 'unified_scanqa' else f'CiDEr@{test_min_iou}'
+    return annotations, outputs, criterion
 
 
 def write_json(path, value):
@@ -51,8 +84,8 @@ class LimitedLoader:
 class RecordedEvaluation:
     """A picklable evaluator, so spawned DataLoader workers can copy the dataset."""
 
-    def __init__(self, evaluate):
-        self.evaluate = evaluate
+    def __init__(self, evaluate, outputs):
+        self.evaluate, self.outputs = evaluate, outputs
 
     def __call__(self, args, epoch, model, config, loader, logout=print, curr_train_iter=-1):
         python_state, numpy_state = random.getstate(), np.random.get_state()
@@ -69,7 +102,7 @@ class RecordedEvaluation:
             root = Path(args.checkpoint_dir)
             destination = root / 'evaluations' / f'epoch-{epoch + 1:03d}'
             destination.mkdir(parents=True, exist_ok=True)
-            for name in ('qa_corpus_val.json', 'qa_pred_val.json', 'qa_pred_gt_val.json'):
+            for name in self.outputs:
                 shutil.copyfile(root / name, destination / name)
             write_json(destination / 'metrics.json', dict(
                 epoch=epoch, train_iteration=curr_train_iter, metrics=metrics,
@@ -104,7 +137,9 @@ def worker(rank, args):
         steps_per_epoch = len(loaders['train'])
         args.eval_every_iteration = steps_per_epoch
         args.save_every = args.max_epoch * steps_per_epoch + 1
-        validation.eval_func = RecordedEvaluation(validation.eval_func)
+        validation_annotations, outputs, _ = validation_setup(
+            args.eval_dataset or args.dataset, args.test_min_iou)
+        validation.eval_func = RecordedEvaluation(validation.eval_func, outputs)
         manifest_path = root / 'run_manifest.json'
         if is_primary():
             if manifest_path.exists():
@@ -112,6 +147,8 @@ def worker(rank, args):
                 if saved['args'] != stable_args(args):
                     raise ValueError('Training arguments changed between stages')
             else:
+                train_dataset = (loaders['train'].loader if args.preflight_steps
+                                 else loaders['train']).dataset
                 digest = hashlib.sha256()
                 for name, parameter in model_no_ddp.named_parameters():
                     if parameter.requires_grad:
@@ -120,10 +157,16 @@ def worker(rank, args):
                 write_json(manifest_path, dict(
                     args=stable_args(args), initial_trainable_sha256=digest.hexdigest(),
                     pretrained_sha256=sha256(args.pretrained_weights),
-                    train_annotations_sha256=sha256('data/ScanQA/ScanQA_v1.0_train.json'),
-                    validation_annotations_sha256=sha256('data/ScanQA/ScanQA_v1.0_val.json'),
-                    train_questions=len(loaders['train'].loader.dataset if args.preflight_steps
-                                        else loaders['train'].dataset),
+                    train_annotations_sha256={
+                        path: sha256(path) for path in
+                        (TRAIN_ANNOTATIONS[name] for name in args.dataset.split(','))
+                    },
+                    validation_annotations_sha256=sha256(validation_annotations),
+                    train_questions=len(train_dataset),
+                    train_examples_by_dataset={
+                        name: len(dataset) for name, dataset in
+                        zip(args.dataset.split(','), train_dataset.datasets)
+                    },
                     validation_questions=len(validation.annotations),
                     steps_per_epoch=steps_per_epoch,
                     torch=torch.__version__, transformers=transformers.__version__,
@@ -165,47 +208,25 @@ def worker(rank, args):
     entrypoint.main(rank, args)
 
 
-def summarize(root):
-    runs = [root / name for name in ('baseline', 'kl')]
-    summaries = [json.loads((run / 'summary.json').read_text()) for run in runs]
-    manifests = [json.loads((run / 'run_manifest.json').read_text()) for run in runs]
-    for summary in summaries:
-        if not summary['complete'] or summary['skipped_steps']:
-            raise ValueError('Both training schedules must complete without skipped steps')
-    for key in ('initial_trainable_sha256', 'pretrained_sha256', 'train_annotations_sha256',
-                'validation_annotations_sha256', 'steps_per_epoch', 'train_questions',
-                'validation_questions', 'torch', 'transformers', 'gpu'):
-        if manifests[0][key] != manifests[1][key]:
-            raise ValueError(f'Mismatched {key}')
-    for key in manifests[0]['args'].keys() | manifests[1]['args'].keys():
-        if key not in ('checkpoint_dir', 'kl_attention_loss'):
-            if manifests[0]['args'].get(key) != manifests[1]['args'].get(key):
-                raise ValueError(f'Mismatched argument {key}')
-    report = dict(
-        scope='Full ScanQA validation; 24-epoch task-specific training from detector/BERT initialization',
-        seed=manifests[0]['args']['seed'], baseline=summaries[0], kl=summaries[1],
-        best_validation_cider_x100_delta=100 * (
-            summaries[1]['best']['metrics']['CiDEr'] - summaries[0]['best']['metrics']['CiDEr']),
-        final_validation_cider_x100_delta=100 * (
-            summaries[1]['final']['metrics']['CiDEr'] - summaries[0]['final']['metrics']['CiDEr']),
-        note='Single training seed; no generalist pretraining. Best checkpoints selected on validation.',
-    )
-    write_json(root / 'comparison.json', report)
-    print(json.dumps(report, indent=2))
-
-
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--expected_start_epoch', type=int, default=0)
-    parser.add_argument('--preflight_steps', type=int, default=0)
-    parser.add_argument('--summarize', type=Path)
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     epilog='All other arguments are passed to main.py.')
+    parser.add_argument('--expected_start_epoch', type=int, default=0,
+                        help='Fail unless the run resumes at this epoch (0 for a new run)')
+    parser.add_argument('--preflight_steps', type=int, default=0,
+                        help='Smoke test: train this many steps and validate on 16 samples')
     options, remaining = parser.parse_known_args()
-    if options.summarize:
-        summarize(options.summarize)
-        return
     args = entrypoint.make_args_parser(remaining)
-    if args.dataset != 'unified_scanqa' or args.test_only or not args.reseed_each_epoch:
-        parser.error('Use training mode, --dataset unified_scanqa, and --reseed_each_epoch')
+    validation_name = args.eval_dataset or args.dataset
+    if validation_name not in VALIDATION or args.test_only or not args.reseed_each_epoch:
+        parser.error('Use training mode, one validation set from '
+                     f'{sorted(VALIDATION)}, and --reseed_each_epoch')
+    criterion = validation_setup(validation_name, args.test_min_iou)[2]
+    if args.criterion != criterion:
+        parser.error(f'Use --criterion {criterion} for {validation_name}')
+    unknown = set(args.dataset.split(',')) - TRAIN_ANNOTATIONS.keys()
+    if unknown:
+        parser.error(f'No recorded annotations for training datasets {sorted(unknown)}')
     if not args.freeze_detector or not args.freeze_llm or not args.pretrained_weights:
         parser.error('Specify frozen detector/LLM and pretrained detector weights')
     args.expected_start_epoch = options.expected_start_epoch

@@ -3,7 +3,8 @@ Modified from: https://github.com/facebookresearch/votenet/blob/master/scannet/b
 
 Batch mode in loading Scannet scenes with vertices and ground truth labels for semantic and instance segmentations
 
-Usage example: python ./batch_load_scannet_data.py
+Usage (from datasets/scannet):
+    python batch_load_scannet_data.py --scannet_dir /path/to/scannet/scans --output_dir /path/to/scannet_data
 """
 
 import datetime
@@ -91,6 +92,12 @@ def batch_export(scan_dir, out_dir):
 
 
 if __name__ == '__main__':
-    SCANNET_DIR = '/data/disk1/data/scannet/scans'
-    OUTPUT_FOLDER = '/data/disk1/data/scannet/scannet_llm'
-    batch_export(SCANNET_DIR, OUTPUT_FOLDER)
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--scannet_dir', default='../../data/scannet/scans',
+                        help='ScanNet v2 "scans" folder with one sub-folder per scene')
+    parser.add_argument('--output_dir', default='../../data/scannet/scannet_data',
+                        help='where to write the prepared *_aligned_vert.npy, *_spt.npy, ... files')
+    options = parser.parse_args()
+    SCANNET_DIR = options.scannet_dir
+    batch_export(SCANNET_DIR, options.output_dir)

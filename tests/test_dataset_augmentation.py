@@ -67,39 +67,6 @@ class ScanNetAugmentationTests(unittest.TestCase):
                 np.testing.assert_allclose(result["point_clouds"][:, :3], self.xyz[keep])
                 np.testing.assert_array_equal(result["spts"].ravel(), [2, 0, 1])
 
-    def test_grounding_uses_sampled_instances_after_crop_and_reordering(self):
-        np.save(Path(self.directory.name) / f'{self.scene}_ins_label.npy', np.array([0, 1, 2, 3]))
-        dataset = self.make_dataset(True, crop=True)
-        dataset.kl_attention_loss = True
-        keep = np.array([3, 1, 2])
-        dataset.random_cuboid_augmentor = lambda cloud, boxes, labels: (
-            cloud[keep], boxes, [label[keep] for label in labels]
-        )
-        def reordered_sampling(cloud, count, return_choices):
-            choices = np.array([2, 0, 1])
-            return cloud[choices], choices
-        with patch('numpy.random.random', side_effect=[0.1, 0.1, 0.5] * 2), \
-                patch('libs.pc_utils.random_sampling', side_effect=reordered_sampling):
-            result = dataset._get_scan_data(self.scene, grounding_object_ids=[0, 2])
-            unsupported = dataset._get_scan_data(self.scene)
-        # Retained one-based instance labels are [2, 3, 1].
-        np.testing.assert_array_equal(result['grounding_point_mask'], [False, True, True])
-        np.testing.assert_allclose(result['point_clouds'][:, :3], self.xyz[[2, 3, 1]])
-        self.assertEqual(result['grounding_point_mask'].dtype, np.bool_)
-        self.assertFalse(unsupported['grounding_point_mask'].any())
-
-    def test_grounding_is_absent_when_disabled_and_on_validation(self):
-        args = argparse.Namespace(root_dir=self.directory.name, kl_attention_loss=True)
-        dataset = ScanNetBaseDataset(args, DatasetConfig(args), split_set='val', num_points=4,
-                                     use_random_cuboid=False)
-        with patch('libs.pc_utils.random_sampling', side_effect=self.ordered_sampling):
-            result = dataset._get_scan_data(self.scene, grounding_object_ids=[0])
-            plain = self.make_dataset(True)
-            plain.augment = False
-            disabled = plain._get_scan_data(self.scene, grounding_object_ids=[0])
-        self.assertNotIn('grounding_point_mask', result)
-        self.assertNotIn('grounding_point_mask', disabled)
-
 
 if __name__ == "__main__":
     unittest.main()

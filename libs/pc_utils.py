@@ -464,7 +464,10 @@ def query_ball_point(radius, nsample, xyz, new_xyz):
     B, N, C = xyz.shape
     _, S, _ = new_xyz.shape
     group_idx = torch.arange(N, dtype=torch.long).to(device).view(1, 1, N).repeat([B, S, 1])
-    sqrdists = torch.cdist(new_xyz, xyz)
+    # Squared distances against the squared radius, as in the CUDA ball_query the
+    # pretrained detector was trained with. torch.cdist alone is the plain distance,
+    # which shrank every ball to radius**2 (0.2 m -> 0.04 m) and broke detection.
+    sqrdists = torch.cdist(new_xyz, xyz) ** 2
     group_idx[sqrdists > radius ** 2] = N
     # Keep the lowest input indices, exactly as the full sort did. These are
     # radius neighbors in input order, not the nearest points by distance.

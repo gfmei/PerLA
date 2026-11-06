@@ -92,9 +92,7 @@ class Dataset(ScanNetBaseDataset):
 
         scan_name = self.annotations[idx]['scene_id']
         task_name = self.annotations[idx]['task_name']
-        ret_dict = self._get_scan_data(
-            scan_name, grounding_object_ids=self.annotations[idx].get('object_ids', []),
-        )
+        ret_dict = self._get_scan_data(scan_name)
 
         # load question and answer
         question = self.annotations[idx]['question'].lower()

@@ -1,269 +1,223 @@
+<div align="center">
+
 # PerLA: Perceptive 3D Language Assistant
 
-Official code for **PerLA**, accepted at **CVPR 2025**. PerLA connects 3D point
-clouds with a language model for question answering, dense captioning, and
-scene understanding.
+**CVPR 2025**
 
-[Project website](https://gfmei.github.io/PerLA/) ·
+Guofeng Mei, Wei Lin, Luigi Riz, Yujiao Wu, Fabio Poiesi, Yiming Wang
+
 [Paper](https://arxiv.org/abs/2411.19774) ·
-[Training guide](docs/full_scanqa_training.md) ·
-[Measured speed improvements](docs/training_speed.md)
+[Project page](https://gfmei.github.io/PerLA/) ·
+[Checkpoints](https://huggingface.co/RyanMei/PerLA)
 
-## Measured improvements
+</div>
 
-### Training speed and GPU memory
+PerLA is a 3D language assistant for question answering and dense captioning in
+indoor scenes. Point-cloud language models usually see a heavily downsampled
+scene and lose the fine detail that many questions depend on. PerLA processes
+the scene in parallel local regions ordered along a Hilbert curve, then merges
+local detail into the global scene representation with a learnable
+superpoint-aware aggregation. A Q-Former turns the merged features into a
+prefix for a frozen OPT-1.3B language model.
 
-The point-cloud sampling optimization was measured against the preceding
-implementation on the **same four A100-SXM-64GB GPUs**, with **16 CPUs per task**
-and an unchanged **batch size of 4 per GPU / 16 total**.
+<p align="center">
+  <img src="static/images/block_diagram.png" width="90%" alt="PerLA architecture">
+</p>
 
-| Measurement | Reference | Optimized |
-| --- | ---: | ---: |
-| Mean training step | 4.644 s | **2.366 s** |
-| Training examples per second | 3.445 | **6.762** |
-| Peak allocated GPU memory per GPU, maximum across ranks | 20.128 GiB | **8.400 GiB** |
+## News
 
-This gives **1.96× throughput**, **49.05% less GPU time per training step**, and
-**58.3% lower peak allocated memory**. The benchmark includes data loading,
-transfer, forward/backward, AdamW, and distributed synchronization. It uses
-three warmup steps and 12 measured steps per variant. Initialization, validation,
-and checkpoint writes are excluded.
+- **2026-11** · Code release with an improved training recipe, task-specific
+  checkpoints, and a corrected PointNet++ ball query (see [Release notes](#release-notes)).
+- **2025** · PerLA is accepted at CVPR 2025.
 
-Initial weights and input batches matched, and every measured training loss
-was identical. Full-run cost savings remain to be measured.
-[Methodology, source hashes, and raw results →](docs/training_speed.md)
+## Results
 
-### KL attention grounding
+Task-specific training from the pretrained detector, without generalist
+pretraining, on the ScanNet validation splits. Each number comes from a single
+training run (seed 0); the checkpoint is the epoch with the best validation
+CIDEr. LL3DA numbers are from its paper (Table 5, trained per task from
+scratch).
 
-An optional grounding loss supervises Q-Former attention using annotated object
-regions. In a **200-step, single-seed pilot on 128 ScanQA validation questions**,
-CIDEr ×100 increased from **10.75 to 23.54**. These subset results do not establish
-full-validation accuracy or an improvement over the published PerLA benchmark.
-[Grounding method](docs/attention_grounding.md) ·
-[Pilot results and uncertainty](docs/grounding_pilot_results.md)
+### 3D question answering (ScanQA)
 
-**Full-training status, 2026-11-01:** two 24-epoch ScanQA schedules—baseline and
-baseline + KL—are queued with the optimized code for the full-validation accuracy
-comparison. GPU experiments are limited to these two runs; existing speed and
-pilot measurements are reused. Four-GPU training, validation, and checkpoint
-checks passed for both. Full-validation results remain pending.
-These runs start from the pretrained detector and language components
-with a fresh captioner; they do not include generalist pretraining.
-[Schedule and artifacts →](docs/full_scanqa_training.md)
+| Method | CIDEr | BLEU-4 | METEOR | ROUGE-L |
+| --- | ---: | ---: | ---: | ---: |
+| LL3DA | 74.80 | 13.68 | 15.40 | 36.25 |
+| **PerLA** | **77.06** | **13.91** | **15.46** | **37.00** |
 
-## Environment
+### 3D dense captioning (IoU 0.5)
 
-The measured runs used Python **3.10.20**, PyTorch **2.2.0+cu121**, and
-Transformers **4.40.2**. Run commands from the repository root.
+| Method | ScanRefer C | B-4 | M | R | Nr3D C | B-4 | M | R |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| LL3DA | **62.84** | **35.81** | **25.81** | **54.45** | 44.95 | 27.67 | **25.67** | **55.79** |
+| **PerLA** | 62.16 | 34.37 | 25.51 | 53.66 | **46.76**† | **28.25**† | 25.53† | 55.47† |
 
-An environment matching the core package versions is:
+C: CIDEr, B-4: BLEU-4, M: METEOR, R: ROUGE-L.
+† Nr3D training is still running; these numbers come from the first 8 of its
+16 epochs. They will be updated with the final checkpoint.
+
+The ScanQA and ScanRefer models use gated fusion. The Nr3D model also uses the
+part and context prompts and 3D rotary position encoding described below; these
+have not yet been trained on the other two benchmarks. Results with generalist
+pretraining and fine-tuning are in the paper.
+
+## Installation
+
+The code is tested with Python 3.10, PyTorch 2.2.0 (CUDA 12.1) and
+Transformers 4.40.2 on NVIDIA A100 GPUs.
 
 ```bash
-conda create -n perla python=3.10
+git clone https://github.com/gfmei/PerLA.git
+cd PerLA
+conda create -n perla python=3.10 -y
 conda activate perla
-python -m pip install torch==2.2.0 --index-url https://download.pytorch.org/whl/cu121
-python -m pip install \
-  transformers==4.40.2 numpy==1.23.1 scipy==1.13.1 \
-  addict==2.4.0 h5py==3.11.0 easydict==1.9
+pip install torch==2.2.0 --index-url https://download.pytorch.org/whl/cu121
+pip install -r requirements.txt
 ```
 
-Training requires CUDA. METEOR evaluation also requires Java; the recorded runs
-used OpenJDK 11. Mesh preprocessing additionally needs `plyfile`. Visualization
-utilities have separate dependencies such as `trimesh`, `open3d`, and
-`matplotlib`; they are not required for the training commands below.
+METEOR evaluation needs Java 11 or newer on the `PATH`. Optionally, compile
+the Cython box-intersection routine for faster evaluation:
 
-## Data and pretrained weights
+```bash
+cd libs && python cython_compile.py build_ext --inplace && cd ..
+```
 
-Prepare these assets before starting a run:
+## Data preparation
 
-| Asset | Location / argument |
-| --- | --- |
-| Prepared ScanNet scenes with superpoints | `--root_dir` |
-| ScanQA training and validation annotations | `data/ScanQA/ScanQA_v1.0_{train,val}.json` |
-| OPT-1.3B model and tokenizer | `--vocab` |
-| LL3DA BERT embedding checkpoint and tokenizer | `--qformer_vocab` |
-| Pretrained XYZ/color/normal detector | `pretrained/scannet_vote2cap_detr_XYZ_COLOR_NORMAL.pth` |
-
-Each prepared scene must include `_aligned_vert.npy`, `_aligned_bbox.npy`,
-`_ins_label.npy`, `_sem_label.npy`, and `_spt.npy` files. The commands below
-enable color and normals, so vertex features must include XYZ, RGB, and normals.
-
-<details>
-<summary>Scene preparation and annotation layout</summary>
-
-Follow the [ScanNet preparation instructions](https://github.com/ch3cook-fdu/Vote2Cap-DETR/tree/master/data/scannet).
-Set `SCANNET_DIR` and `OUTPUT_FOLDER` in
-[datasets/scannet/batch_load_scannet_data.py](datasets/scannet/batch_load_scannet_data.py),
-then run:
+**ScanNet scenes.** Download [ScanNet v2](https://github.com/ScanNet/ScanNet)
+and export the scenes (vertices with color and normals, instance and semantic
+labels, boxes, and superpoints):
 
 ```bash
 cd datasets/scannet
-python batch_load_scannet_data.py
+python batch_load_scannet_data.py --scannet_dir /path/to/scannet/scans \
+                                  --output_dir ../../data/scannet/scannet_data
 cd ../..
 ```
 
-Annotation sources:
+Each scene produces `*_aligned_vert.npy`, `*_aligned_bbox.npy`,
+`*_ins_label.npy`, `*_sem_label.npy` and `*_spt.npy`. The training and
+evaluation scripts read them from `data/scannet/scannet_data`; set `DATA_ROOT`
+to use another location.
 
-- [ScanQA](https://github.com/ATR-DBI/ScanQA/blob/main/docs/dataset.md)
-- [ScanRefer](https://github.com/daveredrum/ScanRefer)
-- [Nr3D / ReferIt3D](https://referit3d.github.io/)
-- [Included 3D-LLM annotations](data/3D_LLM) and
-  [preprocessing script](data/3D_LLM/pre-process-3D-LLM.py)
-
-The ScanQA-only commands need ScanQA annotations. Generalist training also uses
-ScanRefer, Nr3D, and 3D-LLM:
+**Annotations.** ScanRefer, Nr3D and 3D-LLM annotations are included under
+`data/`. Download [ScanQA](https://github.com/ATR-DBI/ScanQA/blob/main/docs/dataset.md)
+and place it as follows:
 
 ```text
 data/
-├── ScanQA/
-│   ├── ScanQA_v1.0_train.json
-│   └── ScanQA_v1.0_val.json
-├── ScanRefer/
-│   ├── ScanRefer_filtered_train.json
-│   └── ScanRefer_filtered_val.json
-├── Nr3D/
-│   ├── nr3d_train.json
-│   └── nr3d_val.json
-└── 3D_LLM/
-    ├── 3d_llm_embodied_dialogue_filtered_{train,val}.json
-    ├── 3d_llm_embodied_planning_filtered_{train,val}.json
-    └── 3d_llm_scene_description_{train,val}.json
+├── ScanQA/ScanQA_v1.0_{train,val}.json
+├── ScanRefer/ScanRefer_filtered_{train,val}.json
+├── Nr3D/nr3d_{train,val}.json
+└── 3D_LLM/3d_llm_*_{train,val}.json
 ```
 
-</details>
-
-The examples use local model directories under `outputs/models/`. Obtain the
-weights and tokenizers for `facebook/opt-1.3b` and
-`CH3COOK/bert-base-embedding`, and adjust `--vocab` and `--qformer_vocab` to
-their locations. A detector-only checkpoint initializes training; evaluation
-requires a trained PerLA captioner checkpoint.
-
-## Quickstart: a bounded ScanQA pilot
-
-Inside a one-GPU allocation, after preparing the assets:
-
-```bash
-python scripts/run_grounding_pilot.py \
-  --steps 200 --validation_samples 128 --seed 0 \
-  --dataset unified_scanqa --detector perla --captioner perla \
-  --use_color --use_normal --freeze_detector --freeze_llm \
-  --root_dir outputs/data/scannet_scanqa \
-  --vocab outputs/models/opt-1.3b \
-  --qformer_vocab outputs/models/bert-base-embedding \
-  --pretrained_weights pretrained/scannet_vote2cap_detr_XYZ_COLOR_NORMAL.pth \
-  --checkpoint_dir outputs/experiments/scanqa-pilot/baseline \
-  --ngpus 1 --batchsize_per_gpu 4 --dataset_num_workers 4 \
-  --n_splits 6 --n_neighs 24 --n_clus 128 \
-  --fusion_method baseline --neighbor_selection hilbert \
-  --base_lr 1e-4 --final_lr 1e-4 \
-  --local_loss_weight 1 --global_loss_weight 1 \
-  --max_des_len 224 --max_prompts 1 --use_beam_search
-```
-
-For the matched KL variant, use a fresh output directory and append:
-
-```text
---kl_attention_loss --kl_attention_weight 1.0 --kl_attention_smoothing 0.05
-```
-
-The runner records initialization, data hashes, actual optimizer steps,
-predictions, metrics, runtime, and peak memory. Use a new directory for every
-pilot; the general trainer automatically resumes an existing
-`checkpoint.pth`.
-
-## Full training
-
-[The full ScanQA guide](docs/full_scanqa_training.md) describes the two submitted
-24-epoch runs: all **25,563 training questions**, all **4,675 validation questions**
-after every epoch, four GPUs, global batch 16, and **16 CPUs per task**.
-
-`scripts/run_full_scanqa.py` supports staged jobs using `--stop_epoch` while
-preserving the full `--max_epoch` learning-rate schedule. It checks resume
-configuration and optimizer-step counts, writes checkpoints atomically, and
-retains per-epoch predictions. The Slurm launchers contain paths, a Python
-environment, and modules for the recorded cluster; adapt them and your
-account/partition before using them elsewhere.
-
-For generalist pretraining followed by task-specific tuning, use the existing
-launchers. They accept additional command-line arguments to override defaults:
-
-| Task | Launcher |
-| --- | --- |
-| Generalist pretraining | `scripts/opt-1.3b/train.generalist.sh` |
-| ScanQA tuning | `scripts/opt-1.3b/tuning.scanqa.sh` |
-| ScanRefer tuning | `scripts/opt-1.3b/tuning.scanrefer.sh` |
-| Nr3D tuning | `scripts/opt-1.3b/tuning.nr3d.sh` |
-
-For example, with four allocated GPUs and the required generalist datasets:
-
-```bash
-bash scripts/opt-1.3b/train.generalist.sh \
-  --root_dir /path/to/prepared/scannet \
-  --vocab outputs/models/opt-1.3b \
-  --qformer_vocab outputs/models/bert-base-embedding \
-  --ngpus 4 --batchsize_per_gpu 4 --n_splits 6 --n_neighs 24 \
-  --checkpoint_dir outputs/experiments/generalist
-```
-
-Point `--root_dir` at scenes covering **all selected datasets**, and initialize
-task tuning with the trained generalist's `checkpoint_best.pth`.
-The [accuracy protocol](docs/ll3da_benchmark.md) provides complete tuning commands,
-split controls, and guidance for comparisons with published results.
+**Models.** The pretrained 3D detector
+(`pretrained/scannet_vote2cap_detr_XYZ_COLOR_NORMAL.pth`) is included.
+[OPT-1.3B](https://huggingface.co/facebook/opt-1.3b) and the
+[Q-Former embeddings](https://huggingface.co/CH3COOK/bert-base-embedding) are
+downloaded from the Hugging Face Hub on first use. To use local copies, set
+`OPT` and `QFORMER` to their directories.
 
 ## Evaluation
 
-Evaluate a trained ScanQA checkpoint with the same architecture and fusion
-settings used during training:
+Download a checkpoint and evaluate it on the validation split:
 
 ```bash
-bash scripts/opt-1.3b/eval.scanqa.sh \
-  --root_dir outputs/data/scannet_scanqa \
-  --vocab outputs/models/opt-1.3b \
-  --qformer_vocab outputs/models/bert-base-embedding \
-  --test_ckpt outputs/experiments/scanqa-pilot/baseline/checkpoint.pth \
-  --checkpoint_dir outputs/experiments/scanqa-pilot/baseline/eval \
-  --ngpus 1 --batchsize_per_gpu 4 --seed 0 \
-  --n_splits 6 --n_neighs 24 --n_clus 128 \
-  --fusion_method baseline --neighbor_selection hilbert --max_des_len 224
+hf download RyanMei/PerLA perla_scanqa.pth --local-dir ckpts
+bash scripts/eval.sh scanqa ckpts/perla_scanqa.pth
 ```
 
-The evaluation launchers also cover
-[generalist](scripts/opt-1.3b/eval.generalist.sh),
-[ScanRefer](scripts/opt-1.3b/eval.scanrefer.sh), and
-[Nr3D](scripts/opt-1.3b/eval.nr3d.sh).
-Evaluators return raw CIDEr; multiply by 100 when comparing with tables that use
-CIDEr ×100. The command above evaluates the full ScanQA validation split, so its
-score has a different scope from the pilot's 128-question subset.
+The first argument selects the benchmark: `scanqa`, `scanrefer` or `nr3d`.
+Predictions and metrics are written next to the checkpoint (or to
+`OUTPUT_DIR`). Use `NGPUS=4` to evaluate on several GPUs. Metrics are printed
+as fractions; the tables above multiply them by 100.
 
-Pilot checkpoints are local experiment artifacts. Full-run benchmark
-checkpoints and accuracy results have not yet been released.
+| Checkpoint | Benchmark | Recipe |
+| --- | --- | --- |
+| [`perla_scanqa.pth`](https://huggingface.co/RyanMei/PerLA/blob/main/perla_scanqa.pth) | ScanQA | gated fusion |
+| [`perla_scanrefer.pth`](https://huggingface.co/RyanMei/PerLA/blob/main/perla_scanrefer.pth) | ScanRefer | gated fusion |
+| `perla_nr3d.pth` (coming soon) | Nr3D | gated fusion, part/context prompts, 3D RoPE |
 
-## Tests and documentation
+## Training
 
-The model code has been cleaned up to remove unused legacy fusion/clustering
-variants, unreferenced module copies, and obsolete debug demonstrations. Active
-model computations and checkpoint parameter layouts are preserved.
+Train on one benchmark with two GPUs (global batch 16):
 
 ```bash
-python -m unittest discover -s tests -v
+bash scripts/train.sh scanqa    outputs/perla_scanqa
+bash scripts/train.sh scanrefer outputs/perla_scanrefer
+bash scripts/train.sh nr3d      outputs/perla_nr3d
 ```
 
-The current suite contains 73 tests. On the CPU, 72 passed and the CUDA-only
-sampling test was skipped; all three sampling tests passed in a GPU allocation.
-Separate four-GPU checks verified baseline/KL training, validation, and
-checkpoint writes with 16 CPUs per task.
+Training uses a cosine learning-rate schedule over 24 epochs (ScanQA) or 16
+epochs (dense captioning) and validates after every epoch. Each epoch's
+predictions and metrics are kept under `<output>/evaluations/`.
+`checkpoint_best.pth` holds the best epoch, and `summary.json` records the best
+and final results. On two A100 GPUs, one epoch including validation takes
+about 1.5 hours on ScanQA and 1.7 to 1.9 hours on Nr3D and ScanRefer.
 
-| Guide | Contents |
+Long runs can be split into stages that keep the full schedule, for example
+to fit cluster time limits. Re-running with the same output directory resumes
+from its last epoch:
+
+```bash
+STOP_EPOCH=8 bash scripts/train.sh nr3d outputs/perla_nr3d                # epochs 1-8
+START_EPOCH=8 bash scripts/train.sh nr3d outputs/perla_nr3d               # epochs 9-16
+```
+
+Environment variables: `NGPUS` (default 2, must divide 16), `DATA_ROOT`, `OPT`,
+`QFORMER`. Any extra arguments are passed to `main.py`. A quick smoke test runs
+two training steps and validates on 16 samples:
+
+```bash
+bash scripts/train.sh scanqa outputs/smoke-test --preflight_steps 2
+```
+
+**Generalist pretraining.** The paper's recipe first pretrains one model on
+the LL3DA task mixture (ScanQA, ScanRefer, Nr3D and 3D-LLM), then fine-tunes it
+per task:
+
+```bash
+bash scripts/generalist/pretrain.sh outputs/perla_generalist
+bash scripts/generalist/finetune.sh scanqa outputs/perla_generalist/checkpoint_best.pth outputs/perla_scanqa_ft
+```
+
+## Method options
+
+The release recipes are defined in [scripts/recipes.sh](scripts/recipes.sh).
+
+| Option | Effect |
 | --- | --- |
-| [Training speed](docs/training_speed.md) | Matched timings, GPU memory, cost scope, raw records |
-| [Grounding pilot](docs/grounding_pilot_results.md) | Accuracy diagnostic, uncertainty, reproducibility |
-| [Full ScanQA training](docs/full_scanqa_training.md) | Schedule, Slurm jobs, continuation, outputs |
-| [KL attention grounding](docs/attention_grounding.md) | Supervision, masks, loss settings |
-| [Adaptive fusion](docs/adaptive_fusion.md) | Experimental instruction conditioning and geometric neighbors |
-| [Accuracy protocol](docs/ll3da_benchmark.md) | Generalist/tuning recipes and controlled comparisons |
+| `--fusion_method gated` | Blend local detail into the global scene features with a learned per-channel gate, initialized close to the global features. `baseline` replaces them with the local update, as in the paper. |
+| `--local_loss_weight 0.1 --global_loss_weight 0.01` | Weights of the superpoint consistency losses. |
+| `--qformer_rope` | Interleaved 3D rotary position encoding in the Q-Former cross-attention. Visual prompt tokens attend to scene features by their 3D offset from the prompted object; the learned latent queries attend by content only. |
+| `--box_part_tokens` | Eight additional prompt tokens per box, one per octant, pooled from the dense local features with their mean color. |
+| `--context_objects 8` | One prompt token for each of the 8 nearest other detected objects, for relational descriptions. |
+| `--box_prompt_ratio 1.0 --min_box_prompt_iou 0.5` | Dense captioning: prompt every training sample with its box, as evaluation does, and skip the caption loss when no detected proposal overlaps the box (IoU < 0.5). |
 
-Instruction-conditioned fusion remains experimental; its accuracy improvement
-has not yet been measured.
+## Release notes
+
+- **Corrected ball query.** `query_ball_point` compared unsquared distances
+  with the squared radius, which shrank every PointNet++ neighborhood (a
+  0.2 m radius acted as 0.04 m). With the fix, the frozen detector reproduces
+  its published detection accuracy.
+- **Improved recipe.** Gated local–global fusion with smaller auxiliary-loss
+  weights, plus part and context prompts with 3D rotary position for dense
+  captioning.
+- **Faster training.** Point sampling and Hilbert encoding run batched on the
+  GPU, which roughly halves the training step time and lowers peak memory by
+  more than half.
+- **Reproducible staged training.** `scripts/train.py` checks resume
+  consistency, reseeds every epoch, writes checkpoints atomically, and keeps
+  per-epoch validation results.
+
+## Tests
+
+```bash
+python -m unittest discover -s tests
+```
+
+The suite runs on the CPU; one point-sampling test additionally needs a GPU.
 
 ## Citation
 
@@ -271,24 +225,24 @@ has not yet been measured.
 @inproceedings{mei2025PerLA,
   title     = {PerLA: Perceptive 3D Language Assistant},
   author    = {Guofeng Mei and Wei Lin and Luigi Riz and Yujiao Wu and Fabio Poiesi and Yiming Wang},
-  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
   year      = {2025}
 }
 ```
 
-## Acknowledgments and contributions
+## Acknowledgments
 
-PerLA builds on [LL3DA](https://github.com/Open3DA/LL3DA) and
-[Vote2Cap-DETR](https://github.com/ch3cook-fdu/Vote2Cap-DETR).
-We thank their authors and the dataset contributors.
+PerLA builds on [LL3DA](https://github.com/Open3DA/LL3DA),
+[Vote2Cap-DETR](https://github.com/ch3cook-fdu/Vote2Cap-DETR) and
+[3DETR](https://github.com/facebookresearch/3detr). We thank their authors and
+the creators of ScanNet, ScanQA, ScanRefer, ReferIt3D and 3D-LLM.
 
-Bug reports and pull requests are welcome. Include the command, environment,
-and relevant logs when reporting a problem.
-[Open an issue](https://github.com/gfmei/PerLA/issues) or contact
+Questions and bug reports are welcome as
+[GitHub issues](https://github.com/gfmei/PerLA/issues) or by email to
 [gmei@fbk.eu](mailto:gmei@fbk.eu).
 
 ## License
 
-The code is licensed under [Apache 2.0](LICENSE).
-The project website is licensed under
-[Creative Commons Attribution-ShareAlike 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+The code is released under the [Apache 2.0 license](LICENSE). The project
+website is licensed under
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
